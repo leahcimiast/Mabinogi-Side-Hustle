@@ -1,0 +1,25 @@
+# Private references and user data
+.local/
+*.xlsx
+*.xls
+*.mp4
+*.mov
+*.avi
+*.png
+*.jpg
+*.jpeg
+*.log
+logs/
+reports/
+settings.json
+.env*
+credentials*
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.zip
+*.exe
+*.spec
+.pytest_cache/
