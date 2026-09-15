@@ -23,3 +23,10 @@ dist/
 *.exe
 *.spec
 .pytest_cache/
+
+*.bmp
+*.webp
+*.gif
+*.mkv
+*.wav
+diagnostic*.json

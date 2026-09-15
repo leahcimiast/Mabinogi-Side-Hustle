@@ -309,5 +309,3 @@ Activating another can displace the previous quest from the tracker.
 5. Validate acceptance criteria and package the portable ZIP.
 
 Keep background-input feasibility separate from the foreground workflow.
-
-
