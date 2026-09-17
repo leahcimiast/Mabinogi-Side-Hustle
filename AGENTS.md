@@ -1,5 +1,27 @@
 # Project: Mabinogi Mobile Quest Assistant
 
+## Current scope override (2026-09-17)
+
+The user changed the active workflow. These rules supersede the stock-scanning
+and dynamic allocation requirements below for the current prototype:
+
+- Assume all 19 whitelist quest types are prepared, three completions each (57 total).
+- Do not scan scroll quantities or material stock quantities.
+- Start with the player already in the shared storage tab.
+- Every launch starts a fresh batch; archive old progress, do not automatically resume it. New batch is a single-click reset once the worker has stopped.
+- Storage search continues while the content moves, even when OCR names repeat or are empty. Retry paced wheel input and distinguish a motionless panel from proven item absence.
+- Window title: 瑪奇M - 兼職小助手. Do not show the large 19-material/57-quest heading.
+- Use one main window for controls, material progress, current action, stop reasons, debug log, and recovery. Do not expose obsolete capture/OCR preview tools in the player GUI.
+- Batch start automatically checks the game window and 1280 x 960 content; no manual detect/capture/UI-confirmation prerequisite.
+- Clear the default quantity field with select-all and Backspace before typing the required amount.
+- Withdraw the full whitelist per-completion quantity multiplied by three; do not subtract carried stock.
+- Verify the selected material name and the quantity entered by the app before confirming transfer.
+- Failed materials with no transfer attempted may be skipped and listed for manual retrieval; verify storage before continuing. Keep exact required amounts. F8, lost focus, uncertain screens, and unknown transfer outcomes still stop. Player must explicitly confirm manually retrieved materials before submission.
+- Finish the whole withdrawal batch before manual movement and a separate user-triggered submission stage.
+- Complete one quest at a time, three of each in whitelist order, verifying completion before activation of the next.
+- Interrupted actions require explicit reconciliation when their outcome is unknown; do not replay them.
+- Name preview may use the user-approved fuzzy rules; literal plus signs and material mappings remain distinct.
+
 ## Goal
 
 Build a portable Windows desktop app that automates material retrieval and
@@ -33,6 +55,8 @@ Users must not need Python or Excel installed.
 ## Working rules
 
 - Keep changes small and easy to review.
+
+- For future changes, perform a code review after implementation and before delivery or commit. Check correctness, regressions, safety boundaries, performance, and appropriate tests; report findings and remaining limitations. This is a code-review requirement, not an extra approval gate before coding.
 
 - Inspect the repository before choosing the implementation approach.
 

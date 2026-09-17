@@ -13,24 +13,28 @@ class Detection:
     count: int | None
     box: tuple
     note: str
+    kind: str = "unclassified"
+    raw_text: str = ""
 
 
-def recognize(image, script):
+def recognize(image, script, timeout=45):
     with tempfile.TemporaryDirectory(prefix='mabinogi-ocr-') as temp:
         path = Path(temp) / 'capture.png'
         image.save(path)
         result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
                                  '-File', str(script), '-ImagePath', str(path)],
                                 capture_output=True, encoding='utf-8', errors='replace',
-                                timeout=45, creationflags=subprocess.CREATE_NO_WINDOW)
+                                timeout=timeout, creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or 'OCR failed')
         return json.loads(result.stdout.lstrip('\ufeff'))
 
 
-def match_items(words, whitelist, size):
+def match_items(words, whitelist, size, mode="quest"):
+    if mode not in ("quest", "material"):
+        raise ValueError("Choose quest or material mode explicitly")
     # Group character tokens into full visual labels, never substring-match materials.
-    names = {q.quest for q in whitelist} | {q.material for q in whitelist}
+    names = {q.quest for q in whitelist} if mode == "quest" else {q.material for q in whitelist}
     rows = []
     for word in sorted(words, key=lambda w: (w['y'], w['x'])):
         center = word['y'] + word['h']/2
@@ -70,5 +74,5 @@ def match_items(words, whitelist, size):
             if owners == 1 and re.fullmatch(r'[0-9]+',word['text']):
                 count = int(word['text'])
         detections.append(Detection(name,count,box,
-            '候選配對，需人工核對' if count is not None else '數量不明：缺少、縮寫或配對不唯一'))
+            '候選配對，需人工核對' if count is not None else '數量不明：缺少、縮寫或配對不唯一', mode))
     return detections

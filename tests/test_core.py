@@ -28,19 +28,19 @@ class WhitelistTests(unittest.TestCase):
 
 class RecognitionTests(unittest.TestCase):
     def test_label_and_count(self):
-        found=match_items([word('羊',100,w=15),word('毛',117,w=15),word('70',120,65)],Q,(1280,960))
+        found=match_items([word('羊',100,w=15),word('毛',117,w=15),word('70',120,65)],Q,(1280,960),mode="material")
         self.assertEqual([(x.name,x.count) for x in found],[('羊毛',70)])
     def test_no_partial_material_match(self):
-        self.assertEqual(match_items([word('高級羊毛',w=70)],Q,(1280,960)),[])
+        self.assertEqual(match_items([word('高級羊毛',w=70)],Q,(1280,960),mode="material"),[])
     def test_plus_is_literal(self):
-        self.assertEqual(match_items([word('高級原木')],Q,(1280,960)),[])
-        self.assertEqual(match_items([word('高級原木+')],Q,(1280,960))[0].name,'高級原木+')
+        self.assertEqual(match_items([word('高級原木')],Q,(1280,960),mode="material"),[])
+        self.assertEqual(match_items([word('高級原木+')],Q,(1280,960),mode="material")[0].name,'高級原木+')
     def test_missing_abbreviated_and_ambiguous_counts(self):
         for counts in [[],[word('1萬',120,65)],[word('70',120,65),word('80',140,65)]]:
-            self.assertIsNone(match_items([word('羊毛')]+counts,Q,(1280,960))[0].count)
+            self.assertIsNone(match_items([word('羊毛')]+counts,Q,(1280,960),mode="material")[0].count)
     def test_whitespace_not_character_substitution(self):
-        self.assertEqual(match_items([word('採集卷軸:羊毛',w=150)],Q,(1280,960))[0].name,'採集卷軸: 羊毛')
-        self.assertEqual(match_items([word('採集卷軸：羊毛',w=150)],Q,(1280,960)),[])
+        self.assertEqual(match_items([word('採集卷軸:羊毛',w=150)],Q,(1280,960),mode="quest")[0].name,'採集卷軸: 羊毛')
+        self.assertEqual(match_items([word('採集卷軸：羊毛',w=150)],Q,(1280,960),mode="quest"),[])
 
 class SafetyTests(unittest.TestCase):
     def test_paused_and_cancelled_never_send(self):

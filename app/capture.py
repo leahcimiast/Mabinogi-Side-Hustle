@@ -70,7 +70,9 @@ def detect():
             title = C.create_unicode_buffer(u.GetWindowTextLengthW(hwnd) + 1)
             u.GetWindowTextW(hwnd, title, len(title))
             proc = process_name(hwnd)
-            if proc.lower() == 'mabinogimobile.exe' or '瑪奇 Mobile' in title.value:
+            # Titles are descriptive only: the helper itself includes the game title.
+            # An unreadable or different process must never become an input target.
+            if proc.lower() == 'mabinogimobile.exe':
                 found.append(GameWindow(hwnd, title.value, proc, client_rect(hwnd)))
         return True
     callback = callback_type(visit)
