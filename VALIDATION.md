@@ -137,3 +137,12 @@ Offline suite: 83 tests, 82 passed, 1 deliberate global-hotkey skip. Covers two 
 - Supplied 637 x 942 storage-panel crop was placed at (0,0) on a blank 1280 x 960 offline canvas, not treated as a live capture. At the visible soybean cell, isolated 2x OCR returned 黃豆; 4x/6x and atlas-only variants omitted it. The new isolated unread-cell fallback returned 黃豆 from the supplied image.
 - Current-page-first search removes unconditional rewinds. Storage ROI observations retain five OCR methods and original source pixels. A duplicate initial search observation and pre-quantity title check were removed; name and actual quantity are still checked immediately before transfer.
 - Timing and code-review findings are in PERFORMANCE_REVIEW.md. 132 tests passed. No live game input, complete 19-material timing, executable build, commit, push or publication performed. The requested two-thirds overall reduction remains unverified.
+
+### 外觀修改驗證（2026-09-17）
+
+- PR 分支完整測試：135 項通過，包含按鈕 callback／disabled、動態輸入框與縮放狀態檢查。
+- 最新未提交功能快照：172 項完整測試通過；其中 27 項 GUI 測試亦以獨立 Tk 程序通過，涵蓋行內編輯、Enter/Escape、交付前確認、停止與核對流程。
+- 實際 Tk 視窗檢查：素材頁、任務行內編輯、除錯展開與待核對區；修正底部紀錄資訊與清除名稱按鈕的可見性。
+- 原始碼審查：GUI 僅增加主題 import／初始化與視窗尺寸掛接，未更換元件、callbacks、事件綁定或批次流程。未發現阻擋合併的問題。
+- 本機 PyInstaller ZIP 建置成功；打包後 offline diagnostic 成功，19 種素材／57 次、sent_keys=0；確認包含 desktop_theme 與 PIL.ImageTk。
+- 尚未驗證：多螢幕間動態 DPI 切換、完整遊戲批次，以及打包後完整互動流程。GUI 測試使用暫存資料與 mock Safety；本次未向遊戲送出輸入。未發布 release。
