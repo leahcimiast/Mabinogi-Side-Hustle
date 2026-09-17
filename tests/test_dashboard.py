@@ -85,7 +85,8 @@ class DashboardTests(unittest.TestCase):
         buttons=self.app.withdraw_button.master.pack_slaves()
         self.assertLess(buttons.index(self.app.new_button),buttons.index(self.app.withdraw_button))
         self.assertTrue(self.app.notice.cget('text').startswith('注意事項:'))
-        self.assertEqual(str(self.app.notice.cget('foreground')),'#c62828')
+        from app.desktop_theme import COLORS
+        self.assertEqual(str(self.app.notice.cget('foreground')),COLORS['warning'])
         self.assertIn('12',str(self.app.notice.cget('font')))
     def test_copy_all_uses_full_report_not_truncated_widget(self):
         full='\n'.join(f'紀錄 {i}' for i in range(2100))

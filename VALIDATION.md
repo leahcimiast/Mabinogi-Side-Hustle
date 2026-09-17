@@ -198,3 +198,20 @@ User reported the retrieval test passed with 100% accuracy (user-run evidence). 
 - Reviewed own-window render at 660x720, including active inline editor and footer. Screenshot remains under ignored `.local/`.
 - Code review checked input release paths, stop/focus checks per drag step, fallback bounds, OCR coordinate remapping, single-row edits, persistence and worker locking. Fixed Treeview's default click handler stealing editor focus by consuming the handled cell click. `git diff --check` passed.
 - Still unverified in the live game: drag acceptance and end-to-end submission. No game input was sent during these tests.
+### 外觀修改驗證（2026-09-17）
+
+- PR 分支完整測試：135 項通過，包含按鈕 callback／disabled、動態輸入框與縮放狀態檢查。
+- 最新未提交功能快照：172 項完整測試通過；其中 27 項 GUI 測試亦以獨立 Tk 程序通過，涵蓋行內編輯、Enter/Escape、交付前確認、停止與核對流程。
+- 實際 Tk 視窗檢查：素材頁、任務行內編輯、除錯展開與待核對區；修正底部紀錄資訊與清除名稱按鈕的可見性。
+- 原始碼審查：GUI 僅增加主題 import／初始化與視窗尺寸掛接，未更換元件、callbacks、事件綁定或批次流程。未發現阻擋合併的問題。
+- 本機 PyInstaller ZIP 建置成功；打包後 offline diagnostic 成功，19 種素材／57 次、sent_keys=0；確認包含 desktop_theme 與 PIL.ImageTk。
+- 尚未驗證：多螢幕間動態 DPI 切換、完整遊戲批次，以及打包後完整互動流程。GUI 測試使用暫存資料與 mock Safety；本次未向遊戲送出輸入。未發布 release。
+
+
+## 2026-09-17 PR #3 integration validation
+
+- Integrated PR #3 head `150ec792e39b6f89dc11afd9520aa6920ca905a6` with the latest withdrawal and submission changes. GUI hooks merged cleanly; README and validation append conflicts were resolved by preserving both sets of content.
+- Combined suite: 175 tests passed, including the three desktop-theme tests and current inline editor/navigation/safety tests. Existing Tk teardown warnings were non-failing.
+- Visually reviewed the actual themed task table with an active inline editor using temporary data and mock Safety; editing one row and debug expand/collapse also passed. Screenshot remains private under ignored `.local/`.
+- Reviewed staged GUI/theme diff: only theme import/initialization and debug resize hooks modify the functional GUI; automation/input/batch modules are unchanged by the theme merge. No blocking compatibility finding. `git diff --check` passed.
+- No new portable package or release. In-game full-batch and dynamic multi-monitor DPI limitations remain unverified.
