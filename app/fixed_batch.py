@@ -1,5 +1,5 @@
 """Fixed three-completion batch and durable progress, without stock/count OCR."""
-from dataclasses import dataclass,asdict
+from dataclasses import dataclass,asdict,replace
 from pathlib import Path
 import json,os,hashlib,time
 
@@ -33,6 +33,15 @@ def fixed_batch(entries):
     data=json.dumps([asdict(q) for q in entries],ensure_ascii=False,sort_keys=True)
     return Batch(tuple(MaterialRequest(k,v) for k,v in totals.items()),tuple(completions),hashlib.sha256(data.encode()).hexdigest())
 
+def submission_plan(batch,names):
+    templates={q.quest:q for q in batch.completions}
+    ordinals={};result=[]
+    for name in names:
+        if name not in templates:raise ValueError('交付清單包含未知任務。')
+        ordinals[name]=ordinals.get(name,0)+1
+        result.append(replace(templates[name],ordinal=ordinals[name]))
+    return replace(batch,completions=tuple(result))
+
 class Journal:
     """Persist intent BEFORE irreversible input; unresolved intent blocks replay."""
     def __init__(self,path,batch):
@@ -42,7 +51,9 @@ class Journal:
             self.data=json.loads(self.path.read_text(encoding='utf-8'))
             if self.data.get('fingerprint')!=batch.fingerprint:
                 raise ValueError('批次白名單已改變，請先結束／重設原批次。')
-            if not set(self.data.get('withdrawn',[]))<=set(m.name for m in batch.materials) or not 0<=self.data.get('completed',-1)<=len(batch.completions):
+            if 'submission_plan' in self.data:
+                self.batch=submission_plan(batch,self.data['submission_plan'])
+            if not set(self.data.get('withdrawn',[]))<=set(m.name for m in batch.materials) or not 0<=self.data.get('completed',-1)<=len(self.batch.completions):
                 raise ValueError('本機進度資料無效，禁止自動操作。')
         self.data.setdefault('skipped',{});self.data.setdefault('manual',[])
     @classmethod
@@ -54,6 +65,22 @@ class Journal:
             path.rename(archive/f'fixed-batch-{time.time_ns()}.json')
         journal=cls(path,batch);journal.save()
         return journal
+
+    def set_remaining(self,entries,counts):
+        self.ready()
+        if self.data['active'] is not None:raise RuntimeError('請先完成已啟用的任務，再修改剩餘數量。')
+        if set(counts)!={q.quest for q in entries} or any(type(n) is not int or not 0<=n<=9999 for n in counts.values()):
+            raise ValueError('交付數量必須為 0 至 9999 的整數。')
+        names=[q.quest for q in self.batch.completions[:self.data['completed']]]
+        names.extend(q.quest for q in entries for _ in range(counts[q.quest]))
+        updated=submission_plan(fixed_batch(entries),names)
+        previous=self.data.get('submission_plan');self.data['submission_plan']=names
+        try:self.save()
+        except Exception:
+            if previous is None:self.data.pop('submission_plan',None)
+            else:self.data['submission_plan']=previous
+            raise
+        self.batch=updated
 
     def save(self):
         self.path.parent.mkdir(parents=True,exist_ok=True)

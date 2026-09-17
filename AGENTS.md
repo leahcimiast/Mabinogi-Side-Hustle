@@ -7,7 +7,7 @@ and dynamic allocation requirements below for the current prototype:
 
 - Assume all 19 whitelist quest types are prepared, three completions each (57 total).
 - Do not scan scroll quantities or material stock quantities.
-- Start with the player already in the shared storage tab.
+- Retrieval starts in shared storage. Submission may start independently at the bulletin board, assuming the player already has all materials; do not require retrieval or manual-shortfall completion records.
 - Every launch starts a fresh batch; archive old progress, do not automatically resume it. New batch is a single-click reset once the worker has stopped.
 - Storage search continues while the content moves, even when OCR names repeat or are empty. Retry paced wheel input and distinguish a motionless panel from proven item absence.
 - Window title: 瑪奇M - 兼職小助手. Do not show the large 19-material/57-quest heading.
@@ -15,12 +15,16 @@ and dynamic allocation requirements below for the current prototype:
 - Batch start automatically checks the game window and 1280 x 960 content; no manual detect/capture/UI-confirmation prerequisite.
 - Clear the default quantity field with select-all and Backspace before typing the required amount.
 - Withdraw the full whitelist per-completion quantity multiplied by three; do not subtract carried stock.
-- Verify the selected material name and the quantity entered by the app before confirming transfer.
-- Failed materials with no transfer attempted may be skipped and listed for manual retrieval; verify storage before continuing. Keep exact required amounts. F8, lost focus, uncertain screens, and unknown transfer outcomes still stop. Player must explicitly confirm manually retrieved materials before submission.
-- Finish the whole withdrawal batch before manual movement and a separate user-triggered submission stage.
+- Use the current selected storage-list cell for material identity. Do not repeat tooltip-name OCR or request name approval during withdrawal. Verify the quantity dialog and entered number before transfer; wait for the storage list before the next item.
+- Failed materials with no transfer attempted may be skipped and listed for manual retrieval; verify storage before continuing. Keep exact required amounts. F8, lost focus, uncertain screens, and unknown transfer outcomes still stop. Manual retrieval records are optional bookkeeping and do not gate submission.
+- Retrieval and submission are separate player-triggered actions. Submission does not require a prior retrieval run.
 - Complete one quest at a time, three of each in whitelist order, verifying completion before activation of the next.
-- Interrupted actions require explicit reconciliation when their outcome is unknown; do not replay them.
+- Withdrawal policy: after successful claim-click dispatch, immediately mark retrieved and assume the material entered inventory. Do not wait for storage or stock verification to record success. Waiting for the next storage screen must not undo progress or replay the transfer. Failed input dispatch remains unresolved. Quest activation/completion retain explicit verification and recovery.
 - Name preview may use the user-approved fuzzy rules; literal plus signs and material mappings remain distinct.
+- Submission quantities are player-editable remaining counts per quest, default three, with zero to skip. Preserve completed history on stopped-worker edits; block edits during active/pending quests. Fresh batches reset defaults. Retrieval remains three completions worth per material.
+- Submission identifies scrolls by the item-name half of each inventory cell, permitting unique fuzzy OCR matches; do not repeat tooltip-name OCR or request name confirmation. Preserve plus signs, grades, material mappings, and explicit activation/completion verification.
+- Edit each submission remaining count directly in its table cell; save on Enter/focus loss, without a separate count/apply bar.
+- Navigate the inventory top filter by a horizontal drag and click 任務. The vertical wheel did not move this bar in live testing. If drag fails, use bounded E fallback with fast cropped control OCR, verifying selection; avoid repeated full-screen OCR for navigation.
 
 ## Goal
 

@@ -39,7 +39,7 @@ class WithdrawalTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.j=Journal(Path(self.temp.name)/'p.json',fixed_batch(ENTRIES))
         self.j.data['withdrawn']=[m.name for m in self.j.batch.materials[1:]]
         self.safety=Mock();self.runner=Runner(Mock(),self.safety,Mock(),self.j,ENTRIES,Path('scripts/ocr.ps1'))
-        self.runner.storage_top=Mock();self.runner.rest=Mock();self.runner.click=Mock();self.runner.key=Mock()
+        self.runner.wait_transfer_prompt=Mock();self.runner.storage_top=Mock();self.runner.rest=Mock();self.runner.click=Mock();self.runner.key=Mock()
         self.screen=Mock();self.screen.storage.return_value=True;self.screen.quantity_dialog.return_value=True
         self.runner.screen=Mock(return_value=self.screen)
         self.runner.wait=Mock(return_value=self.screen)
@@ -48,31 +48,44 @@ class WithdrawalTests(unittest.TestCase):
         self.runner.vision.storage_names_retry=Mock(return_value=[])
         self.runner.vision.tooltip_retry=Mock(return_value=[])
     def tearDown(self):self.temp.cleanup()
+    def test_quantity_field_gets_focus_delay_before_typing(self):
+        events=Mock()
+        events.attach_mock(self.runner.click,'click')
+        events.attach_mock(self.runner.rest,'rest')
+        events.attach_mock(self.safety.number,'number')
+        self.runner.withdrawal()
+        from unittest.mock import call
+        calls=events.mock_calls
+        focus=calls.index(call.click((960,788)))
+        self.assertEqual(calls[focus+1],call.rest(.5))
+        self.assertEqual(calls[focus+2],call.number(self.runner.window,60))
+
     def test_mismatched_field_never_confirms_transfer(self):
         self.runner.vision.entered_quantity.return_value=59
         self.runner.withdrawal()
         self.assertIn('鐵礦石',self.j.data['skipped'])
         self.assertIsNone(self.j.data['pending'])
         self.assertNotIn('鐵礦石',self.j.data['withdrawn'])
-        self.assertNotIn(((960,902),),[c.args for c in self.runner.click.call_args_list])
+        self.safety.click.assert_not_called()
     def test_transient_unreadable_quantity_retries_without_retyping(self):
         self.runner.vision.entered_quantity.side_effect=[None,None,60]
         self.runner.withdrawal()
         self.assertEqual(self.runner.vision.entered_quantity.call_count,3)
         self.safety.number.assert_called_once()
-        self.assertEqual(sum(c.args==((960,902),) for c in self.runner.click.call_args_list),1)
+        self.safety.click.assert_called_once_with(self.runner.window,960,902)
     def test_persistent_unreadable_quantity_never_confirms(self):
         self.runner.vision.entered_quantity.return_value=None
         self.runner.withdrawal()
         self.assertIn('三次',self.j.data['skipped']['鐵礦石'])
         self.assertEqual(self.runner.vision.entered_quantity.call_count,3)
-        self.assertNotIn(((960,902),),[c.args for c in self.runner.click.call_args_list])
+        self.safety.click.assert_not_called()
         self.assertIsNone(self.j.data['pending'])
-    def test_missing_title_cannot_use_matching_number(self):
+    def test_missing_title_does_not_block_matching_number(self):
         self.screen.item_title.return_value=None
         self.screen.tooltip_titles.return_value=[]
-        with self.assertRaises(RuntimeError):self.runner.verify_quantity('箭花',60)
-        self.runner.vision.entered_quantity.assert_not_called()
+        self.assertEqual(self.runner.verify_quantity('箭花',60),60)
+        self.screen.item_title.assert_not_called()
+        self.runner.vision.tooltip_retry.assert_not_called()
         self.runner.click.assert_not_called()
     def test_transient_dialog_failure_rechecks_same_frame_identity(self):
         self.screen.quantity_dialog.side_effect=[False,True]
@@ -83,11 +96,30 @@ class WithdrawalTests(unittest.TestCase):
         self.runner.withdrawal();calls=self.runner.click.call_count
         self.runner.withdrawal();self.assertEqual(self.runner.click.call_count,calls)
         self.assertIn('鐵礦石',self.j.data['withdrawn'])
-    def test_lost_confirmation_leaves_pending_for_manual_reconciliation(self):
-        self.runner.wait.side_effect=[self.screen,RuntimeError('lost confirmation')]
-        with self.assertRaises(RuntimeError):self.runner.withdrawal()
-        self.assertEqual(self.j.data['pending']['kind'],'withdraw')
-        with self.assertRaises(RuntimeError):self.runner.withdrawal()
+    def test_missing_list_after_click_keeps_assumed_success_without_replay(self):
+        from app.automation import ScreenTimeout
+        self.runner.wait.side_effect=[self.screen,ScreenTimeout('list unavailable')]
+        with self.assertRaisesRegex(ScreenTimeout,'list unavailable'):self.runner.withdrawal()
+        self.assertIsNone(self.j.data['pending'])
+        self.assertIn('鐵礦石',self.j.data['withdrawn'])
+        self.assertNotIn('鐵礦石',self.j.data['skipped'])
+        self.safety.click.assert_called_once_with(self.runner.window,960,902)
+        self.runner.withdrawal()
+        self.assertEqual(self.safety.click.call_count,1)
+
+    def test_pause_after_dispatched_click_preserves_success(self):
+        def pause_after_send(*args):
+            if self.safety.click.called:raise RuntimeError('F8')
+        self.runner.rest.side_effect=pause_after_send
+        with self.assertRaisesRegex(RuntimeError,'F8'):self.runner.withdrawal()
+        self.assertIn('鐵礦石',self.j.data['withdrawn'])
+        self.assertIsNone(self.j.data['pending'])
+
+    def test_failed_input_dispatch_does_not_mark_success(self):
+        self.safety.click.side_effect=RuntimeError('input failed')
+        with self.assertRaisesRegex(RuntimeError,'input failed'):self.runner.withdrawal()
+        self.assertNotIn('鐵礦石',self.j.data['withdrawn'])
+
 
 class QuestLoopTests(unittest.TestCase):
     def test_uncertain_submission_cannot_activate_next_scroll(self):
@@ -109,3 +141,15 @@ class QuestLoopTests(unittest.TestCase):
             runner=Runner(Mock(),Mock(),Mock(),j,ENTRIES,Path('scripts/ocr.ps1'));runner.screen=Mock()
             with self.assertRaises(RuntimeError):runner.quests(no_active_confirmed=False)
             runner.screen.assert_not_called()
+
+    def test_submission_without_retrieval_reaches_game_checks(self):
+        with tempfile.TemporaryDirectory() as d:
+            j=Journal(Path(d)/'p.json',fixed_batch(ENTRIES))
+            j.data['skipped']={'鐵礦石':'not found'}
+            runner=Runner(Mock(),Mock(),Mock(),j,ENTRIES,Path('scripts/ocr.ps1'))
+            runner.screen=Mock(side_effect=RuntimeError('game check reached'))
+            with self.assertRaisesRegex(RuntimeError,'game check reached'):
+                runner.quests(no_active_confirmed=True)
+            runner.screen.assert_called_once()
+            self.assertEqual(j.data['withdrawn'],[])
+            self.assertEqual(j.data['completed'],0)

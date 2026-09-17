@@ -44,7 +44,7 @@ class SearchContinuationTests(unittest.TestCase):
         self.assertIn('無法再向下捲動',self.j.data['skipped']['鐵礦石'])
         self.runner.click.assert_not_called()
 
-    def test_truncated_arrowflower_requires_exact_tooltip_before_transfer(self):
+    def test_truncated_arrowflower_uses_initial_identification(self):
         self.j.data['withdrawn']=[m.name for m in self.j.batch.materials if m.name!='箭花']
         candidate=Label('花',(250,350,340,390))
         self.runner.vision.storage_names.return_value=[candidate]
@@ -52,9 +52,8 @@ class SearchContinuationTests(unittest.TestCase):
         self.screen.tooltip_titles.return_value=[]
         self.runner.withdrawal()
         self.assertEqual(self.runner.click.call_args_list[0].args,(candidate.point,))
-        self.screen.item_title.assert_called_with('箭花')
-        self.assertNotIn(((960,902),),[c.args for c in self.runner.click.call_args_list])
-        self.assertIn('箭花',self.j.data['skipped'])
+        self.screen.item_title.assert_not_called()
+        self.assertIn('箭花',self.j.data['withdrawn'])
         self.assertIsNone(self.j.data['pending'])
 
     def test_duplicate_truncated_arrowflower_is_ambiguous(self):
@@ -96,22 +95,16 @@ class SearchContinuationTests(unittest.TestCase):
         self.runner.click.assert_not_called();self.safety.number.assert_not_called()
         self.assertIsNone(self.j.data['pending'])
 
-    def test_onion_typo_is_a_candidate_but_requires_name_review(self):
-        from app.name_memory import NameMemory,NameReviewRequired
-        from pathlib import Path
+    def test_onion_candidate_does_not_trigger_title_review(self):
         self.j.data['withdrawn']=[m.name for m in self.j.batch.materials if m.name!='洋蔥']
         candidate=Label('洋蒽',(250,350,340,390))
         self.runner.vision.storage_names.return_value=[candidate]
-        self.screen.item_title.return_value=None
-        self.screen.tooltip_titles.return_value=[]
-        self.screen.tooltip_titles.return_value=[candidate]
-        self.runner.name_memory=NameMemory(Path(self.temp.name)/'names.json',['洋蔥'])
-        self.runner.wait.side_effect=lambda predicate,reason:predicate(self.screen)
-        with self.assertRaises(NameReviewRequired) as caught:self.runner.withdrawal()
-        self.assertEqual(caught.exception.observed,'洋蒽')
-        self.assertEqual(caught.exception.expected,'洋蔥')
-        self.assertEqual(self.runner.click.call_args_list[0].args,(candidate.point,))
-        self.assertNotIn(((960,902),),[c.args for c in self.runner.click.call_args_list])
+        self.runner.vision.entered_quantity.return_value=30
+        self.runner.on_name_review=Mock()
+        self.runner.withdrawal()
+        self.assertIn('洋蔥',self.j.data['withdrawn'])
+        self.runner.on_name_review.assert_not_called()
+        self.runner.vision.tooltip_retry.assert_not_called()
 
     def test_ocr_retries_find_target_before_scrolling_past_it(self):
         self.runner.vision.storage_names.return_value=[]
@@ -139,3 +132,28 @@ class SearchContinuationTests(unittest.TestCase):
         # the two wait checkpoints supply their own observations in production.
         self.assertEqual(self.runner.screen.call_count,2)
         self.assertEqual(self.runner.wait.call_count,2)
+
+    def test_potato_variants_in_same_cell_do_not_compete(self):
+        name='烤整顆馬鈴薯'
+        self.j.data['withdrawn']=[m.name for m in self.j.batch.materials if m.name!=name]
+        target=Label('烤整顆馬鈴',(437,290,531,320))
+        self.runner.vision.storage_names.return_value=[target,Label('馬鈴薯',(342,650,436,680))]
+        self.runner.vision.storage_names_retry.return_value=[Label('烤整馬鈴薯',target.box),Label('烤整顆馬',target.box)]
+        self.runner.vision.entered_quantity.return_value=15
+        self.runner.scroll_storage=Mock()
+        self.runner.withdrawal()
+        self.runner.storage_top.assert_not_called()
+        self.runner.scroll_storage.assert_not_called()
+        self.assertEqual(self.runner.click.call_args_list[0].args,(target.point,))
+        self.screen.item_title.assert_not_called()
+        self.assertIn(name,self.j.data['withdrawn'])
+
+    def test_potato_variants_in_different_cells_remain_ambiguous(self):
+        name='烤整顆馬鈴薯'
+        self.j.data['withdrawn']=[m.name for m in self.j.batch.materials if m.name!=name]
+        self.runner.vision.storage_names.return_value=[Label('烤整顆馬鈴',(437,290,531,320))]
+        self.runner.vision.storage_names_retry.return_value=[Label('烤整馬鈴薯',(342,650,436,680))]
+        self.runner.scroll_storage=Mock(return_value=(self.screen.image,False))
+        self.runner.withdrawal()
+        self.runner.click.assert_not_called()
+        self.assertIn(name,self.j.data['skipped'])

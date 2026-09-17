@@ -1,5 +1,6 @@
 """Single-window batch dashboard. All Tk updates run on the UI thread."""
 import os,sys,time,json,queue,threading
+from collections import Counter
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
@@ -34,12 +35,12 @@ class App:
         root.option_add('*Font',('Microsoft JhengHei UI',10))
         style=ttk.Style(root);style.configure('Treeview',rowheight=24);style.configure('Heading.TLabel',font=('Microsoft JhengHei UI',16,'bold'))
         outer=ttk.Frame(root,padding=14);outer.pack(fill='both',expand=True)
-        self.notice=ttk.Label(outer,text='注意事項: 遊戲內容 1280 × 960｜領取前開啟「公用保管箱 → 全部」｜每種卷軸準備 3 張，庫存與負重要足夠。',wraplength=610,foreground='#c62828',font=('Microsoft JhengHei UI',12,'bold'))
+        self.notice=ttk.Label(outer,text='注意事項: 遊戲內容 1280 × 960｜領取前開啟「公用保管箱 → 全部」｜交付數量預設每種 3 次，可在任務交付頁修改。',wraplength=610,foreground='#c62828',font=('Microsoft JhengHei UI',12,'bold'))
         self.notice.pack(anchor='w',pady=(5,10))
         bar=ttk.Frame(outer);bar.pack(fill='x')
         self.new_button=ttk.Button(bar,text='新批次',command=self.new_batch);self.new_button.pack(side='left',padx=(0,6))
-        self.withdraw_button=ttk.Button(bar,text='1  開始／繼續領取',command=lambda:self.start('withdraw'));self.withdraw_button.pack(side='left')
-        self.quest_button=ttk.Button(bar,text='2  開始／繼續交付',command=lambda:self.start('quests'));self.quest_button.pack(side='left',padx=8)
+        self.withdraw_button=ttk.Button(bar,text='開始／繼續領取',command=lambda:self.start('withdraw'));self.withdraw_button.pack(side='left')
+        self.quest_button=ttk.Button(bar,text='開始／繼續交付',command=lambda:self.start('quests'));self.quest_button.pack(side='left',padx=8)
         self.pause_button=ttk.Button(bar,text='暫停（F8）',command=self.pause);self.pause_button.pack(side='left')
         self.debug_button=ttk.Button(bar,text='顯示除錯紀錄',command=self.toggle_debug);self.debug_button.pack(side='right',padx=6)
         self.board_ready=tk.BooleanVar(value=False)
@@ -51,9 +52,28 @@ class App:
         self.withdraw_progress=ttk.Progressbar(outer,maximum=19);self.withdraw_progress.pack(fill='x',pady=(4,8))
         details=ttk.LabelFrame(outer,text='目前作業',padding=8);details.pack(fill='x',pady=(0,6))
         body=ttk.Panedwindow(outer,orient='horizontal');self.body=body;body.pack(fill='both',expand=True)
-        left=ttk.LabelFrame(body,text='素材與批次進度',padding=6);right=ttk.LabelFrame(body,text='除錯紀錄',padding=8);self.debug_panel=right
-        body.add(left,weight=1)
-        self.tree=ttk.Treeview(left,columns=('name','quantity','state'),show='headings',height=12,selectmode='browse')
+        self.tabs=ttk.Notebook(body);body.add(self.tabs,weight=1)
+        left=ttk.Frame(self.tabs,padding=6);quest_panel=ttk.Frame(self.tabs,padding=6)
+        self.tabs.add(left,text='素材領取');self.tabs.add(quest_panel,text='任務交付')
+        self.quest_panel=quest_panel
+        right=ttk.LabelFrame(body,text='除錯紀錄',padding=8);self.debug_panel=right
+        self.quest_summary=tk.StringVar()
+        ttk.Label(quest_panel,textvariable=self.quest_summary).pack(anchor='w')
+        ttk.Label(quest_panel,text='點選「剩餘」數字直接修改，Enter 或移開即儲存；0 表示略過。').pack(anchor='w',pady=4)
+        self.quest_amount=tk.StringVar(value='3');self.quest_editor=None;self.quest_editor_row=None
+        frame=ttk.Frame(quest_panel);frame.pack(fill='both',expand=True)
+        self.quest_tree=ttk.Treeview(frame,columns=('quest','planned','done','left'),show='headings',height=6,selectmode='browse')
+        for key,title,width in [('quest','任務',270),('planned','預計',55),('done','已完成',60),('left','剩餘',55)]:
+            self.quest_tree.heading(key,text=title);self.quest_tree.column(key,width=width,minwidth=45)
+        self.quest_tree.pack(side='left',fill='both',expand=True)
+        quest_scroll=ttk.Scrollbar(frame,orient='vertical',command=self.scroll_quest_table)
+        quest_scroll.pack(side='right',fill='y');self.quest_tree.configure(yscrollcommand=quest_scroll.set)
+        self.quest_tree.tag_configure('active',background='#fff1c9')
+        for i,q in enumerate(self.quests):self.quest_tree.insert('','end',iid=str(i),values=(q.quest,3,0,3))
+        self.quest_tree.bind('<Button-1>',self.begin_quest_edit)
+        self.quest_tree.bind('<MouseWheel>',lambda event:self.commit_quest_edit())
+        self.quest_tree.bind('<Configure>',lambda event:self.commit_quest_edit())
+        self.tree=ttk.Treeview(left,columns=('name','quantity','state'),show='headings',height=6,selectmode='browse')
         for key,title,width in [('name','素材',150),('quantity','領取量',65),('state','進度',160)]:
             self.tree.heading(key,text=title);self.tree.column(key,width=width,minwidth=55)
         self.tree.tag_configure('active',background='#fff1c9');self.tree.tag_configure('done',foreground='#28724c')
@@ -149,25 +169,34 @@ class App:
         index=p['value']['index'] if p['kind']=='activate' else p['value']
         q=self.batch.completions[index]
         action='啟用' if p['kind']=='activate' else '交付'
-        return f'{action} {q.quest}（第 {q.ordinal}/3 次）結果未確認。交付成功須包含通關畫面已關閉、回報追蹤消失。'
+        return f'{action} {q.quest}（第 {q.ordinal}/{sum(x.quest==q.quest for x in self.batch.completions)} 次）結果未確認。交付成功須包含通關畫面已關閉、回報追蹤消失。'
     def refresh(self):
         data=self.journal.data if self.journal else {'withdrawn':[],'completed':0,'pending':None,'active':None}
-        count=len(data['withdrawn']);self.summary.set(f'素材領取 {count}/19 種     任務交付 {data["completed"]}/57 次')
+        count=len(data['withdrawn']);total=len(self.batch.completions);self.summary.set(f'素材領取 {count}/19 種     任務交付 {data["completed"]}/{total} 次｜剩餘 {total-data["completed"]} 次')
         self.withdraw_progress['value']=count
         pending=data['pending'];ready=not self.busy and self.journal is not None and not pending and self.name_review is None and self.safety.hotkey_ok
         self.withdraw_button['state']='normal' if ready and count+len(data.get('skipped',{}))<19 else 'disabled'
-        self.quest_button['state']='normal' if ready and count==19 and data['completed']<57 else 'disabled'
+        self.quest_button['state']='normal' if ready and data['completed']<total else 'disabled'
         self.pause_button['state']='normal' if self.busy else 'disabled'
         self.new_button['state']='normal' if self.journal and not self.busy else 'disabled'
         self.board_check['state']='disabled' if self.busy else 'normal'
         self.board_check['text']=('交付前確認：已到佈告欄旁並關閉背包／對話；將接續本批次已啟用的任務。' if data['active'] else '交付前確認：已到佈告欄並關閉背包／對話，沒有其他佈告欄任務。')
         for i,item in enumerate(self.batch.materials):
             done=item.name in data['withdrawn'];active=item.name==self.current_item and not done
-            state=('已手動補領' if item.name in data.get('manual',[]) else '已領取') if done else ('結果待核對' if pending and pending['kind']=='withdraw' and pending['value']==item.name else ('處理中' if active and self.busy else ('已停在此項' if active else '待領取')))
+            state=('已手動補領' if item.name in data.get('manual',[]) else '已領取') if done else (('送出中' if self.busy else '輸入中斷') if pending and pending['kind']=='withdraw' and pending['value']==item.name else ('處理中' if active and self.busy else ('已停在此項' if active else '待領取')))
             if item.name in data.get('skipped',{}):state='待手動補領'
             values=(item.name,item.quantity,state)
             if tuple(self.tree.item(str(i),'values'))!=tuple(map(str,values)):self.tree.item(str(i),values=values)
             self.tree.item(str(i),tags=('done',) if done else ('active',) if active else ())
+        planned=Counter(q.quest for q in self.batch.completions)
+        completed=Counter(q.quest for q in self.batch.completions[:data['completed']])
+        self.quest_summary.set(f'預計 {total} 次｜已完成 {data["completed"]} 次｜剩餘 {total-data["completed"]} 次')
+        editable=not self.busy and self.journal is not None and not pending and not data['active']
+        if not editable:self.cancel_quest_edit()
+        for i,q in enumerate(self.quests):
+            values=(q.quest,planned[q.quest],completed[q.quest],planned[q.quest]-completed[q.quest])
+            if tuple(self.quest_tree.item(str(i),'values'))!=tuple(map(str,values)):self.quest_tree.item(str(i),values=values)
+            self.quest_tree.item(str(i),tags=('active',) if q.quest==self.current_item else ())
         skipped=data.get('skipped',{})
         names=[m.name for m in self.batch.materials if m.name in skipped]
         rows=[f'{m.name} × {m.quantity}｜{skipped[m.name]}' for m in self.batch.materials if m.name in skipped]
@@ -178,10 +207,58 @@ class App:
         if skipped:self.manual_frame.pack(fill='x',pady=4,before=self.body)
         else:self.manual_frame.pack_forget()
         self.manual_confirm['state']='normal' if not self.busy and not pending else 'disabled'
-        if pending:
+        if pending and not self.busy:
             self.pending_text.set(self.pending_description());self.recovery.pack(fill='x',pady=6,before=self.body)
         else:self.recovery.pack_forget();self.reconciled.set(False)
         for button in (self.happened,self.not_happened):button['state']='normal' if pending and not self.busy and self.reconciled.get() else 'disabled'
+    def can_edit_quest_count(self):
+        return (not self.busy and self.journal is not None
+                and not self.journal.data['pending'] and not self.journal.data['active'])
+
+    def cancel_quest_edit(self):
+        editor=self.quest_editor;self.quest_editor=None;self.quest_editor_row=None
+        if editor is not None:editor.destroy()
+
+    def begin_quest_edit(self,event):
+        row=self.quest_tree.identify_row(event.y)
+        if self.quest_tree.identify_column(event.x)!='#4' or not row:return
+        if not self.can_edit_quest_count():return
+        if not self.commit_quest_edit():return
+        box=self.quest_tree.bbox(row,'left')
+        if not box:return
+        self.quest_tree.selection_set(row);self.quest_editor_row=row
+        self.quest_amount.set(self.quest_tree.item(row,'values')[3])
+        self.quest_editor=ttk.Entry(self.quest_tree,textvariable=self.quest_amount,justify='center')
+        self.quest_editor.place(x=box[0],y=box[1],width=box[2],height=box[3])
+        self.quest_editor.bind('<Return>',lambda event:self.commit_quest_edit())
+        self.quest_editor.bind('<FocusOut>',lambda event:self.commit_quest_edit())
+        self.quest_editor.bind('<Escape>',lambda event:self.cancel_quest_edit())
+        self.quest_editor.focus_set();self.quest_editor.selection_range(0,'end')
+        return 'break'  # Do not let Treeview's class binding steal editor focus.
+
+    def scroll_quest_table(self,*args):
+        self.commit_quest_edit();self.quest_tree.yview(*args)
+
+    def commit_quest_edit(self):
+        if self.quest_editor is None:return True
+        row=self.quest_editor_row;raw=self.quest_amount.get().strip()
+        self.cancel_quest_edit()
+        return self.edit_quest_count(row,raw)
+
+    def edit_quest_count(self,row,raw):
+        if not self.can_edit_quest_count():return False
+        try:
+            if not raw.isascii() or not raw.isdecimal():raise ValueError('請輸入 0 至 9999 的整數。')
+            remaining=Counter(q.quest for q in self.batch.completions[self.journal.data['completed']:])
+            counts={q.quest:remaining[q.quest] for q in self.quests}
+            name=self.quests[int(row)].quest
+            if int(raw)==counts[name]:return True
+            counts[name]=int(raw)
+            self.journal.set_remaining(self.quests,counts);self.batch=self.journal.batch
+            self.log(f'交付數量已修改：{name}，剩餘 {counts[name]} 次。')
+            self.refresh();return True
+        except Exception as error:self.fail(str(error));return False
+
     def confirm_manual(self):
         if self.busy or not self.journal or self.journal.data['pending']:return
         selection=self.manual_list.curselection()
@@ -194,11 +271,13 @@ class App:
         except Exception as error:self.fail(str(error))
     def start(self,stage):
         if self.busy or self.journal is None:return
+        if not self.commit_quest_edit():return
         if not self.safety.hotkey_ok:self.fail('F8 不可用；請關閉舊版助手或占用 F8 的程式後重開。');return
         try:self.journal.ready()
         except Exception as error:self.fail(str(error));return
         if stage=='quests':
-            if len(self.journal.data['withdrawn'])!=19:self.fail('本批次素材尚未全部領取。');return
+            self.tabs.select(self.quest_panel)
+            if self.journal.data['completed']>=len(self.batch.completions):self.fail('沒有剩餘交付任務。');return
             if not self.board_ready.get():self.fail('請先勾選交付前確認，再開始交付。');return
         self.busy=True;self.started=time.monotonic();self.last_event=self.started
         self.stop_reason.set('');self.current_item='';self.item_text.set('目前項目：—');self.step.set('步驟：等待切回遊戲')
@@ -266,11 +345,14 @@ class App:
     def new_batch(self):
         if self.busy or not self.journal:return
         try:
+            self.cancel_quest_edit()
+            self.batch=fixed_batch(self.quests)
             self.journal=Journal.fresh(self.journal.path,self.batch)
+            self.quest_amount.set('3')
             self.name_review=None;self.name_review_frame.pack_forget()
             self.board_ready.set(False);self.current_item='';self.started=None
             self.item_text.set('目前項目：—');self.step.set('步驟：待開始');self.elapsed.set('');self.stop_reason.set('')
-            self.status.set('新批次已就緒：素材 0/19，交付 0/57。請開啟公用保管箱，再按開始領取。')
+            self.status.set('新批次已就緒：素材 0/19，交付 0/57。可開啟公用保管箱領取，或備齊素材後直接交付。')
             self.log('已建立新批次；舊進度已封存。');self.refresh()
         except Exception as error:self.fail(str(error))
     def poll(self):

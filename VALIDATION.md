@@ -137,3 +137,64 @@ Offline suite: 83 tests, 82 passed, 1 deliberate global-hotkey skip. Covers two 
 - Supplied 637 x 942 storage-panel crop was placed at (0,0) on a blank 1280 x 960 offline canvas, not treated as a live capture. At the visible soybean cell, isolated 2x OCR returned 黃豆; 4x/6x and atlas-only variants omitted it. The new isolated unread-cell fallback returned 黃豆 from the supplied image.
 - Current-page-first search removes unconditional rewinds. Storage ROI observations retain five OCR methods and original source pixels. A duplicate initial search observation and pre-quantity title check were removed; name and actual quantity are still checked immediately before transfer.
 - Timing and code-review findings are in PERFORMANCE_REVIEW.md. 132 tests passed. No live game input, complete 19-material timing, executable build, commit, push or publication performed. The requested two-thirds overall reduction remains unverified.
+
+
+## 2026-09-17 Transfer prompt readiness regression
+
+- User screenshot shows the centered item tooltip and its green transfer button, not the right-hand quantity dialog. The speed change removed the wait between selection and Space; an ignored early Space left the worker waiting for a dialog that was never opened. Timing causality cannot be proven from the static screenshot alone.
+- Added bounded read-only polling of the central button's 190 x 105 crop with green-color evidence and five OCR variants. Space is sent once only after readiness; no replay if the quantity dialog fails to appear. Existing final material/quantity and durable transfer-intent checks remain intact.
+- Supplied 1263 x 949 screenshot normalized to 1280 x 960 for offline inspection: prompt_ready=True in 0.359 seconds; quantity_dialog=False. No game input sent.
+- Code review checked central-button versus confirmation-button separation, no numeric entry before quantity-dialog evidence, cancellation after OCR, timeout behavior, and absence of Space replay. 137 tests: 136 passed, one real F8 registration test skipped because F8 was occupied.
+- Full live transition remains unverified. No commit, push, merge, or packaged executable in this change.
+
+## Potato candidate and recovery UI fix (2026-09-17)
+
+User log at 20:10:00 contains 烤整顆馬鈴 and 烤整馬鈴薯; both score 5/6 against 烤整顆馬鈴薯. The former ranking compares OCR variants as separate candidates and rejects the tied scores. Candidate ranking now keeps the highest score per physical cell before comparing alternatives. Regression covers same-cell variants selecting the potato, different-cell ties remaining unresolved, and recovery panel hidden during active work but shown after an unresolved stop.
+
+Offline suite: 140 tests, 139 passed, one global-hotkey test deliberately skipped. Supplied screenshot is 1272 x 949 rather than the 1280 x 960 capture baseline; it was preserved and not resized for an OCR success claim. Matching tests use the logged text variants with synthetic cell locations. Live withdrawal of potato remains unverified. No packaging or live game input.
+
+## Storage recovery and quantity timing (2026-09-17)
+
+User log: corn requested 30, read back 0 at 20:19:04; no transfer confirmation sent. Shell quantity was unreadable three times, then recovery stopped at 20:20:09. Log cannot prove flashing icons, focus delay, or numeric OCR as the root cause. Added a 0.5-second field-focus delay and 0.15-second cancellable clear/digit gaps. Recovery observes up to six frames, cancels each recognized overlay type at most once, and logs the individual storage markers. Unknown frames receive no input.
+
+Offline suite: 147 tests, 146 passed, one global-hotkey test skipped deliberately. New regressions cover focus-before-type ordering, clear/digit pacing, cancellation, delayed overlay closure, distinct overlays, bounded failure, and no repeated Escape to unchanged overlays. Live game timing and shell number readability remain unverified. Source only; no package or game input.
+
+## Initial identity and quantity-only withdrawal (2026-09-17)
+
+Latest soybean log identified 黃豆 in the list, then title OCR returned 乛/empty. The title gate prevented numeric OCR and triggered manual name review. Per user request, withdrawal now trusts the current selected list candidate and checks only quantity-dialog presence and the entered amount. It no longer calls tooltip-name retries, remembered-name approval, or the name-review UI during withdrawal. Initial candidate uniqueness, wool-grade and literal-plus rules remain in place. Return-to-storage observation and unknown-transfer recovery remain separate from name checking.
+
+Offline suite: 147 tests, 146 passed, one deliberate global-hotkey skip. Updated tests cover absent titles with correct numbers, initial fuzzy candidates without repeated name review, wrong numbers, missing dialogs, and unknown transfer outcomes. Live soybean retrieval remains unverified. No package or game input.
+
+## Assume retrieval on claim dispatch (2026-09-17)
+
+User explicitly requested skipping retrieval-result confirmation. Successful Safety.click dispatch now immediately confirms the withdrawal journal before any cancellable wait. This is an assumed transfer, not observed inventory evidence. Later storage timeout stops navigation but retains retrieved progress and cannot classify it as a manual shortfall or replay it. Input-dispatch errors remain unresolved; quest checks are unchanged. Offline suite: 149 tests, 148 passed, one deliberate hotkey skip. Covers timeout after dispatch, F8 after dispatch, failed dispatch, quantity mismatch, and single transfer after quantity retries. No live game test or packaging.
+
+## Independent quest submission (2026-09-17)
+
+User reported the retrieval test passed with 100% accuracy (user-run evidence). Submission now assumes player-prepared materials and does not require any retrieved-material count or cleared manual-shortfall list. Removed both GUI start/enable gates and runner retrieval prerequisite; removed numbered action labels. No retrieval records are fabricated. Board acknowledgement, pending-action handling, focus/F8, quantity insertion and one-quest completion checks remain. Offline suite: 151 tests, 150 passed, one deliberate global-hotkey skip. New tests cover fresh-batch start, unresolved manual shortfalls not gating submission, and the runner reaching game checks with zero retrieval. Live quest submission remains unverified. Source only; no package.
+
+
+## 2026-09-17 Submission navigation, name matching, and editable remaining counts
+
+- Source branch: `codex/quest-filter-recognition`; existing uncommitted work was preserved. No commit, push, merge, release, or new executable package.
+- Inventory header: corrected the quest-button search band to y=95..175; one large wheel action on the header replaces repeated E presses. The selected quest tab still requires visible confirmation.
+- Scroll names: padded the label crop upward, and use isolated 2x green-channel reads in the existing OCR session, with a 4x retry only when needed. Match the unique quest-name tail (same .66 edit-score floor and .08 ambiguity margin as material selection), preserving plus signs, known material/scroll differences, and grade distinctions. No count OCR or repeated tooltip-name confirmation. Activation and completion checks remain.
+- Attachment was 1272x947; resized to 1280x960 for offline reproduction only. Original preview missed the first quest. New path located the first cell `(707,247,803,297)` from OCR `採卷軸:鐵礦石` in approximately 0.718 seconds, excluding OCR-session startup. This is a single offline observation, not an end-to-end speed guarantee.
+- Added the main-window submission tab with planned/completed/remaining counts. Editing remaining counts preserves the completed sequence; zero skips, fresh batches reset to three. Running, active, and pending states block edits. Retrieval quantities stay unchanged.
+- `python -m unittest discover -s tests -q`: 164 tests passed. Includes custom-plan persistence, completed-prefix preservation, zero skipping, invalid/active/pending edits, navigation dispatch, OCR tail boundaries, dashboard reset/locking, and a one-quest completion without tooltip-name rereading. Tk emits an occasional ThemeChanged message while test windows are destroyed; the suite passes.
+- UI reviewed at 660x720 using mocked safety and temporary data, with no game input. Reduced table requested heights so footer and local report path remain visible. Private screenshot under ignored `.local/` only.
+- Code review completed: checked plan indices/persistence, no completed-quest replay, activation/completion guards, whitelist/material separation, OCR cell bounds/batch limits, GUI worker locking, and reuse of the OCR session. `git diff --check` passed. No outstanding issue found in the reviewed changes.
+- Not live-tested: whether this game build accepts the large header-wheel gesture, every scroll name at native capture size, and the full quest submission batch. No game input sent during validation.
+
+
+## 2026-09-17 Inline per-quest editing and navigation follow-up
+
+- Branch: `codex/inline-counts-fast-navigation`; prior uncommitted changes preserved. No commit/push/package.
+- Removed the separate quantity/apply bar. Clicking an individual remaining-count cell opens its editor; Enter/focus loss saves only that row, Esc cancels. Scroll/resize commits before moving the editor. Running/active/pending guards and completed history remain.
+- Replaced ineffective vertical header wheel with a 410-pixel horizontal drag (12 paced steps). If the quest tab is still absent, bounded E fallback checks the small inventory controls after each key, up to seven keys. Existing visible/selected quest tabs bypass unnecessary navigation.
+- Navigation and scroll search now use small header and 道具-label crops with five OCR variants including native scale. Native scale was necessary to recover the white selected 任務 tab in the supplied screenshot. All ten crop images share one batch/session; five-second per-batch timeout.
+- Offline attached screenshots normalized to 1280x960 for testing only: stopped-at-全部 image read 道具 and correctly did not claim 任務 selected (0.510 s); prior selected-任務 image read both and confirmed selection (0.248 s). Same-session full-screen observations took 3.039 and 3.217 s respectively. Single-run measurements exclude startup/input/animation and are not full-loop timing guarantees.
+- Full test suite: 172 tests passed. Added real Tk click/focus/Enter row editing, invalid/cancelled edits, drag-success navigation, bounded E fallback, paused input rejection, and drag-button release on F8/focus loss. Existing Tk teardown warnings remain non-failing.
+- Reviewed own-window render at 660x720, including active inline editor and footer. Screenshot remains under ignored `.local/`.
+- Code review checked input release paths, stop/focus checks per drag step, fallback bounds, OCR coordinate remapping, single-row edits, persistence and worker locking. Fixed Treeview's default click handler stealing editor focus by consuming the handled cell click. `git diff --check` passed.
+- Still unverified in the live game: drag acceptance and end-to-end submission. No game input was sent during these tests.

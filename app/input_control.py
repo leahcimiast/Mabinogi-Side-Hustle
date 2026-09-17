@@ -138,17 +138,39 @@ class Safety:
             self._send([INPUT(0,PAYLOAD(mi=MOUSEINPUT(dx,dy,0,0xC001,0,0))),
                         INPUT(0,PAYLOAD(mi=MOUSEINPUT(0,0,(int(notches)*120)&0xffffffff,0x800,0,0)))])
 
+    def drag(self,window,start,end):
+        """A short horizontal swipe, always releasing the button on cancellation."""
+        if any(not 0<=x<1280 or not 0<=y<960 for x,y in (start,end)):
+            raise ValueError('拖曳超出遊戲內容')
+        def movement(x,y):
+            rect=self.check(window)
+            vx,vy=u.GetSystemMetrics(76),u.GetSystemMetrics(77)
+            vw,vh=u.GetSystemMetrics(78),u.GetSystemMetrics(79)
+            dx=round((rect[0]+x-vx)*65535/(vw-1));dy=round((rect[1]+y-vy)*65535/(vh-1))
+            return INPUT(0,PAYLOAD(mi=MOUSEINPUT(dx,dy,0,0xC001,0,0)))
+        with self.lock:self.check(window)
+        try:
+            with self.lock:
+                self._send([movement(*start),INPUT(0,PAYLOAD(mi=MOUSEINPUT(0,0,0,2,0,0)))])
+            for step in range(1,13):
+                if self.cancelled.wait(.025):raise RuntimeError('拖曳已暫停')
+                with self.lock:
+                    self._send([movement(start[0]+(end[0]-start[0])*step/12,start[1]+(end[1]-start[1])*step/12)])
+        finally:
+            # Release even after F8/focus loss; never leave a held mouse button.
+            with self.lock:self._send([INPUT(0,PAYLOAD(mi=MOUSEINPUT(0,0,0,4,0,0)))])
+
     def number(self,window,value):
         if type(value) is not int or value<=0:raise ValueError('領取數量必須是正整數')
         # Select all, explicitly clear the default 1, then type the replacement.
         # Short cancellable gaps let the game's text widget process each event.
         self.key(window,0x41,control=True)
-        if self.cancelled.wait(.05):raise RuntimeError('數量輸入已取消')
+        if self.cancelled.wait(.15):raise RuntimeError('數量輸入已取消')
         self.key(window,0x08)
-        if self.cancelled.wait(.05):raise RuntimeError('數量輸入已取消')
+        if self.cancelled.wait(.15):raise RuntimeError('數量輸入已取消')
         for char in str(value):
             self.key(window,ord(char))
-            if self.cancelled.wait(.05):raise RuntimeError('數量輸入已取消')
+            if self.cancelled.wait(.15):raise RuntimeError('數量輸入已取消')
 
     def close(self):
         self.pause('關閉程式')
