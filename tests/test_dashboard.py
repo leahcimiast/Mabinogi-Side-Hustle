@@ -70,14 +70,14 @@ class DashboardTests(unittest.TestCase):
         with patch('app.gui.prepare_game') as prepare:
             with self.assertRaises(RuntimeError):self.app.review_name(review,Mock())
             prepare.assert_not_called()
-    def test_manual_shortfall_visible_with_debug_hidden_and_gates_quests(self):
+    def test_manual_shortfall_does_not_gate_quests(self):
         self.app.journal.data['withdrawn']=[m.name for m in self.app.batch.materials if m.name!='洋蔥']
         self.app.journal.skip('洋蔥','未找到')
         self.app.refresh()
         self.assertFalse(self.app.debug_visible)
         self.assertEqual(self.app.manual_frame.winfo_manager(),'pack')
         self.assertIn('洋蔥 × 30',self.app.manual_list.get(0))
-        self.assertEqual(str(self.app.quest_button['state']),'disabled')
+        self.assertEqual(str(self.app.quest_button['state']),'normal')
         self.app.manual_list.selection_set(0);self.app.confirm_manual()
         self.assertIn('洋蔥',self.app.journal.data['manual'])
         self.assertEqual(str(self.app.quest_button['state']),'normal')
@@ -141,6 +141,14 @@ class DashboardTests(unittest.TestCase):
         with patch('app.gui.threading.Thread') as thread:
             self.app.start('quests');thread.assert_not_called()
         self.assertIn('勾選',self.app.stop_reason.get())
+    def test_pending_panel_hidden_during_normal_transfer(self):
+        self.app.busy=True
+        self.app.journal.begin('withdraw','鐵礦石');self.app.refresh()
+        self.assertEqual(self.app.recovery.winfo_manager(),'')
+        self.assertIsNotNone(self.app.journal.data['pending'])
+        self.app.busy=False;self.app.refresh()
+        self.assertEqual(self.app.recovery.winfo_manager(),'pack')
+
     def test_pending_reconciliation_is_inline_and_explicit(self):
         self.app.journal.begin('withdraw','鐵礦石');self.app.refresh()
         self.assertEqual(self.app.recovery.winfo_manager(),'pack')
@@ -173,3 +181,56 @@ class DashboardTests(unittest.TestCase):
         import json
         archives=list((self.app.data_dir/'batch-history').glob('*.json'))
         self.assertEqual(len(json.loads(archives[0].read_text(encoding='utf-8'))['withdrawn']),3)
+
+    def test_fresh_batch_can_start_submission_without_retrieval(self):
+        self.app.refresh()
+        self.assertEqual(str(self.app.quest_button['state']),'normal')
+        self.app.board_ready.set(True)
+        with patch('app.gui.threading.Thread') as thread:
+            self.app.start('quests')
+            thread.return_value.start.assert_called_once()
+        self.assertEqual(self.app.journal.data['withdrawn'],[])
+
+    def test_edit_remaining_and_new_batch_defaults(self):
+        self.app.edit_quest_count('0','1')
+        self.assertEqual(len(self.app.batch.completions),55)
+        self.assertEqual(tuple(map(str,self.app.quest_tree.item('0','values')[1:])),('1','0','1'))
+        self.assertIn('55',self.app.quest_summary.get())
+        self.app.new_batch()
+        self.assertEqual(len(self.app.batch.completions),57)
+        self.assertEqual(tuple(map(str,self.app.quest_tree.item('0','values')[1:])),('3','0','3'))
+    def test_edit_disabled_while_worker_running(self):
+        self.app.busy=True;self.app.refresh()
+        self.assertFalse(self.app.can_edit_quest_count())
+        self.app.edit_quest_count('0','0')
+        self.assertEqual(len(self.app.batch.completions),57)
+
+    def test_inline_count_edit_only_changes_clicked_row(self):
+        self.app.tabs.select(self.app.quest_panel);self.root.deiconify();self.root.update()
+        x,y,w,h=self.app.quest_tree.bbox('1','left')
+        self.app.begin_quest_edit(Mock(x=x+w//2,y=y+h//2))
+        self.assertIsNotNone(self.app.quest_editor)
+        self.app.quest_amount.set('7');self.app.commit_quest_edit()
+        self.assertIsNone(self.app.quest_editor)
+        self.assertEqual(self.app.quest_tree.item('0','values')[3],'3')
+        self.assertEqual(self.app.quest_tree.item('1','values')[3],'7')
+        self.assertEqual(len(self.app.batch.completions),61)
+        self.assertFalse(any(w.winfo_class()=='TButton' and w.cget('text')=='套用' for w in self.widgets(self.root)))
+    def test_invalid_inline_value_and_escape_preserve_counts(self):
+        self.app.tabs.select(self.app.quest_panel);self.root.deiconify();self.root.update()
+        x,y,w,h=self.app.quest_tree.bbox('0','left')
+        self.app.begin_quest_edit(Mock(x=x+w//2,y=y+h//2));self.app.quest_amount.set('bad')
+        self.assertFalse(self.app.commit_quest_edit());self.assertEqual(len(self.app.batch.completions),57)
+        self.app.begin_quest_edit(Mock(x=x+w//2,y=y+h//2));self.app.quest_amount.set('8')
+        self.app.cancel_quest_edit();self.assertEqual(len(self.app.batch.completions),57)
+
+    def test_real_tree_click_keeps_editor_focus_and_enter_saves(self):
+        self.app.tabs.select(self.app.quest_panel);self.root.deiconify();self.root.update()
+        self.root.focus_force();self.root.update()
+        x,y,w,h=self.app.quest_tree.bbox('0','left')
+        self.app.quest_tree.event_generate('<Button-1>',x=x+w//2,y=y+h//2);self.root.update()
+        self.assertIsNotNone(self.app.quest_editor)
+        self.assertIs(self.root.focus_get(),self.app.quest_editor)
+        self.app.quest_amount.set('2');self.app.quest_editor.event_generate('<Return>');self.root.update()
+        self.assertIsNone(self.app.quest_editor)
+        self.assertEqual(self.app.quest_tree.item('0','values')[3],'2')

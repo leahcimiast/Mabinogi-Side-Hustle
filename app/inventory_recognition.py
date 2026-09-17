@@ -20,7 +20,7 @@ class Preview:
 
 
 def compact(text):
-    return ''.join(text.split())
+    return ''.join(text.split()).replace('：', ':')
 
 
 def line_text(words):
@@ -59,7 +59,7 @@ def selected_tab(image,words,label):
 def cell_boxes(index):
     row,col=divmod(index,5)
     cx=755+103*col;y=257+123*row
-    return (cx-48,y,cx+48,y+40),(cx-26,y-30,cx+40,y-8)
+    return (cx-48,y-10,cx+48,y+40),(cx-26,y-30,cx+40,y-8)
 
 
 def atlas_words(words,index,pitch,offset,source,scale=4):
@@ -106,21 +106,21 @@ def count_value(words):
 
 
 def build_atlases(image):
-    labels=Image.new('RGB',(2100,1000),'white')
-    green=Image.new('RGB',(2100,1000),'white')
+    labels=Image.new('RGB',(2100,1100),'white')
+    green=Image.new('RGB',(2100,1100),'white')
     counts=Image.new('RGB',(2250,1000),'white')
-    extra=[Image.new('RGB',(2100,1000),'white') for _ in range(3)]
+    extra=[Image.new('RGB',(2100,1100),'white') for _ in range(3)]
     painter=ImageDraw.Draw(counts)
     font=ImageFont.truetype(str(Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts/arial.ttf'),48)
     for i in range(25):
         label_box,count_box=cell_boxes(i);row,col=divmod(i,5)
         crop=ImageOps.autocontrast(ImageOps.invert(image.crop(label_box).convert('L')))
-        labels.paste(crop.resize((384,160)),(col*420+15,row*200+15))
+        labels.paste(crop.resize((384,200)),(col*420+15,row*220+15))
         crop=ImageOps.autocontrast(ImageOps.invert(image.crop(label_box).getchannel('G')))
-        green.paste(crop.resize((384,160),Image.Resampling.LANCZOS),(col*420+15,row*200+15))
+        green.paste(crop.resize((384,200),Image.Resampling.LANCZOS),(col*420+15,row*220+15))
         raw=image.crop(label_box);gray=ImageOps.autocontrast(raw.convert('L'))
         for atlas,variant in zip(extra,[raw,gray,ImageOps.invert(gray.point(lambda p:255 if p>120 else 0))]):
-            atlas.paste(variant.resize((384,160)),(col*420+15,row*200+15))
+            atlas.paste(variant.resize((384,200)),(col*420+15,row*220+15))
         digit=ImageOps.invert(image.crop(count_box).convert('L').point(lambda v:255 if v>185 else 0))
         counts.paste(digit.resize((264,88)),(col*450+140,row*200+40))
         # This cue is never part of count evidence; atlas_words enforces crop bounds.
@@ -137,7 +137,7 @@ def retry_unconfirmed(image,entries,session,cells,alternate,times=None):
     for i in pending[:8]:
         box,_=cell_boxes(i)
         crop=ImageOps.autocontrast(ImageOps.invert(image.crop(box).getchannel('G')))
-        isolated.append(ImageOps.expand(crop.resize((480,200),Image.Resampling.LANCZOS),20,'white'))
+        isolated.append(ImageOps.expand(crop.resize((480,250),Image.Resampling.LANCZOS),20,'white'))
     if times is not None:
         times['preprocess_ms']+=(time.perf_counter()-prep_started)*1000
     results=session.recognize_many(isolated,timeout=20) if isolated else []
@@ -145,10 +145,10 @@ def retry_unconfirmed(image,entries,session,cells,alternate,times=None):
     recovered=0
     for order,i in enumerate(pending):
         original,lw,cw=cells[i];box,_=cell_boxes(i)
-        candidates=[resolve_cell(atlas_words(alternate,i,(420,200),(15,15),box),cw,entries,box)]
+        candidates=[resolve_cell(atlas_words(alternate,i,(420,220),(15,15),box),cw,entries,box)]
         if order<len(results):
             mapped=[dict(text=w['text'],x=box[0]+(w['x']-20)/5,y=box[1]+(w['y']-20)/5,w=w['w']/5,h=w['h']/5)
-                    for w in results[order] if w['x']>=20 and w['y']>=20 and w['x']+w['w']<=500 and w['y']+w['h']<=220]
+                    for w in results[order] if w['x']>=20 and w['y']>=20 and w['x']+w['w']<=500 and w['y']+w['h']<=270]
             candidates.append(resolve_cell(mapped,cw,entries,box))
         chosen=choose_retry(original,candidates)
         recovered+=chosen.kind=='quest'
@@ -196,9 +196,9 @@ def _preview(image,entries,session,mode,times):
     cells=[]
     for i in range(25):
         label_box,count_box=cell_boxes(i)
-        lw=atlas_words(label_words,i,(420,200),(15,15),label_box)
+        lw=atlas_words(label_words,i,(420,220),(15,15),label_box)
         cw=[]  # Scroll quantities are supplied by the player, never OCR.
-        candidates=[resolve_cell(atlas_words(variant,i,(420,200),(15,15),label_box),cw,entries,label_box) for variant in label_sets]
+        candidates=[resolve_cell(atlas_words(variant,i,(420,220),(15,15),label_box),cw,entries,label_box) for variant in label_sets]
         exact={item.name:item for item in candidates if item is not None and item.kind=='quest'}
         if len(exact)>1:
             item=Detection('辨識衝突',None,label_box,'不同 OCR 指向不同卷軸，禁止啟用','conflict',' / '.join(exact))
@@ -234,3 +234,41 @@ def _preview(image,entries,session,mode,times):
     times['matching_ms']+=(time.perf_counter()-start)*1000
     known=sum(d.kind=='quest' for d in detections)
     return Preview(words,detections,mode,f'任務頁：{known} 格完整符合白名單（重讀補回 {recovered} 格）。另有 {sum(d.kind=="quest_fuzzy" for d in detections)} 格模糊採用；卷軸數量由玩家輸入，預設 3。只涵蓋本頁。',reviews)
+
+
+def match_scroll_tail(raw,entries):
+    """Match the item half, without confusing quest materials with scroll names."""
+    from .name_candidates import distance,material_candidate_allowed
+    text=compact(raw)
+    if ':' in text:tail=text.split(':',1)[1]
+    else:
+        match=re.match(r'^.*?卷[軸帕鮋]?(.*)$',text)
+        tail=match.group(1) if match else text
+    if len(tail.replace('+',''))<2:return None
+    ranked=[];materials={compact(q.material) for q in entries}
+    for q in entries:
+        expected=compact(q.quest).split(':',1)[-1]
+        if tail in materials and tail!=expected:continue
+        if tail.count('+')!=expected.count('+') or not material_candidate_allowed(tail,expected):continue
+        if ('級' in tail or '級' in expected) and tail.split('級')[0]!=expected.split('級')[0]:continue
+        score=1-distance(tail,expected)/max(len(tail),len(expected))
+        if score>=.66:ranked.append((score,q.quest))
+    ranked.sort(reverse=True)
+    if not ranked or len(ranked)>1 and ranked[0][0]-ranked[1][0]<.08:return None
+    return ranked[0][1]
+
+
+def scroll_label_candidates(image,quest,entries,session,scale=2):
+    """Read only name cells; a unique item-tail match identifies the selected scroll."""
+    boxes=[cell_boxes(i)[0] for i in range(25)];images=[]
+    for box in boxes:
+        crop=ImageOps.autocontrast(ImageOps.invert(image.crop(box).getchannel('G')))
+        images.append(ImageOps.expand(crop.resize((96*scale,50*scale),Image.Resampling.LANCZOS),40,'white'))
+    results=[]
+    for start in range(0,len(images),12):results.extend(session.recognize_many(images[start:start+12]))
+    found=[]
+    for box,words in zip(boxes,results):
+        inside=[w for w in words if 40<=w['x'] and 40<=w['y'] and w['x']+w['w']<=40+96*scale and w['y']+w['h']<=40+50*scale]
+        raw=compact(line_text(inside))
+        if match_scroll_tail(raw,entries)==quest:found.append((box,raw))
+    return found

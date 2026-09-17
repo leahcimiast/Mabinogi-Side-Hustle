@@ -20,7 +20,7 @@ class NameMemoryTests(unittest.TestCase):
     def test_other_material_and_plus_conflicts_rejected(self):
         for raw,name in [('鐵礦石','箭花'),('高級原木','高級原木+'),('木+','高級原木')]:
             with self.assertRaises(ValueError):self.memory.remember(raw,name)
-    def test_approval_discards_old_frame_and_checks_new_quantity(self):
+    def test_quantity_check_ignores_name_memory_and_title_ocr(self):
         journal=Mock();journal.batch=Mock()
         runner=Runner(Mock(),Mock(),Mock(),journal,[],None,name_memory=self.memory)
         old=Mock();old.quantity_dialog.return_value=True;old.item_title.return_value=None
@@ -33,7 +33,7 @@ class NameMemoryTests(unittest.TestCase):
         runner.batch.materials=[]
         runner.on_name_review=lambda review,window:self.memory.remember(review.observed,review.expected)
         self.assertEqual(runner.verify_quantity('箭花',60),60)
-        runner.vision.entered_quantity.assert_called_once_with(fresh.image)
+        runner.vision.entered_quantity.assert_called_once_with(old.image)
         runner.safety.number.assert_not_called()
     def test_remembered_name_does_not_approve_wrong_quantity(self):
         self.memory.remember('花','箭花')

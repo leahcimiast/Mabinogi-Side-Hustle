@@ -121,6 +121,40 @@ class Vision:
         results=self.session.recognize_many([im.resize((1280*scale,960*scale)) for im,scale in variants])
         mapped=[[dict(text=w['text'],x=w['x']/scale,y=w['y']/scale,w=w['w']/scale,h=w['h']/scale) for w in words] for (_,scale),words in zip(variants,results)]
         return MultiScreen(image,mapped)
+    def observe_inventory_controls(self,image):
+        """Read small controls only; native scale recovers white selected tabs."""
+        if image.size!=(1280,960):raise RuntimeError('Unsupported game area')
+        regions=[(700,95,1260,175),(910,900,1000,945)]
+        inputs=[];spec=[]
+        for box in regions:
+            raw=image.crop(box);gray=ImageOps.autocontrast(raw.convert('L'))
+            variants=[(raw,1),(raw,2),(gray,2),(ImageOps.invert(gray),2),
+                      (ImageOps.invert(gray.point(lambda p:255 if p>120 else 0)),2)]
+            for variant,scale in variants:
+                inputs.append(ImageOps.expand(variant.resize((variant.width*scale,variant.height*scale)),20,'white'))
+                spec.append((box,scale))
+        sets=[]
+        for words,(box,scale) in zip(self.session.recognize_many(inputs,timeout=5),spec):
+            sets.append([dict(text=w['text'],x=box[0]+(w['x']-20)/scale,y=box[1]+(w['y']-20)/scale,w=w['w']/scale,h=w['h']/scale)
+                         for w in words if w['x']>=20 and w['y']>=20
+                         and w['x']+w['w']<=20+(box[2]-box[0])*scale
+                         and w['y']+w['h']<=20+(box[3]-box[1])*scale])
+        return MultiScreen(image,sets)
+
+    def transfer_prompt_ready(self,image):
+        # This central button opens the quantity dialog; it is not the right-side
+        # confirmation button. OCR only this small region while animation settles.
+        box=(540,835,730,940)
+        if not Screen(image,[]).green((565,875,700,915)):return False
+        raw=image.crop(box);gray=ImageOps.autocontrast(raw.convert('L'))
+        variants=[(raw,1),(raw,2),(gray,2),(ImageOps.invert(gray),2),
+                  (ImageOps.invert(gray.point(lambda p:255 if p>120 else 0)),2)]
+        results=self.session.recognize_many([im.resize((im.width*scale,im.height*scale)) for im,scale in variants])
+        for (_,scale),words in zip(variants,results):
+            mapped=[dict(text=w['text'],x=box[0]+w['x']/scale,y=box[1]+w['y']/scale,w=w['w']/scale,h=w['h']/scale) for w in words]
+            if Screen(image,mapped).has('移至背包',box):return True
+        return False
+
     def observe_storage(self,image):
         # OCR only storage controls and the selected-item tooltip. Keep all five
         # methods and original pixels for colour evidence; ignore icon counts.

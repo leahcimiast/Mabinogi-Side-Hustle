@@ -52,3 +52,33 @@ class ShortfallTests(unittest.TestCase):
     def test_manual_confirmation_blocked_by_unresolved_transfer(self):
         self.j.skip('鐵礦石','missing');self.j.begin('withdraw','鐵礦石')
         with self.assertRaises(RuntimeError):self.j.confirm_manual('鐵礦石')
+
+    def test_closing_animation_does_not_send_escape_twice(self):
+        overlay=Mock();overlay.storage.return_value=False;overlay.quantity_dialog.return_value=True
+        transient=Mock();transient.storage.return_value=False;transient.quantity_dialog.return_value=False
+        transient.tooltip_titles.return_value=[];transient.has.return_value=False
+        self.runner.screen=Mock(side_effect=[overlay,overlay,transient,self.screen])
+        self.assertIs(self.runner.restore_storage(),self.screen)
+        self.runner.key.assert_called_once_with(0x1B)
+
+    def test_two_distinct_overlays_each_cancelled_once(self):
+        quantity=Mock();quantity.storage.return_value=False;quantity.quantity_dialog.return_value=True
+        tooltip=Mock();tooltip.storage.return_value=False;tooltip.quantity_dialog.return_value=False
+        tooltip.tooltip_titles.return_value=['title']
+        self.runner.screen=Mock(side_effect=[quantity,quantity,tooltip,tooltip,self.screen])
+        self.assertIs(self.runner.restore_storage(),self.screen)
+        self.assertEqual(self.runner.key.call_count,2)
+
+    def test_unchanged_overlay_stops_after_bounded_observations(self):
+        overlay=Mock();overlay.storage.return_value=False;overlay.quantity_dialog.return_value=True
+        self.runner.screen=Mock(return_value=overlay)
+        with self.assertRaisesRegex(RuntimeError,'六次'):self.runner.restore_storage()
+        self.assertEqual(self.runner.screen.call_count,6)
+        self.runner.key.assert_called_once_with(0x1B)
+
+    def test_recovery_pause_stops_before_another_capture(self):
+        overlay=Mock();overlay.storage.return_value=False;overlay.quantity_dialog.return_value=True
+        self.runner.screen=Mock(return_value=overlay)
+        self.runner.rest.side_effect=RuntimeError('F8')
+        with self.assertRaisesRegex(RuntimeError,'F8'):self.runner.restore_storage()
+        self.assertEqual(self.runner.screen.call_count,1)
