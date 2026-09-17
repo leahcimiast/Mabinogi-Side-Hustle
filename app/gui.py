@@ -3,6 +3,7 @@ import os,sys,time,json,queue,threading
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk
+from .desktop_theme import apply_theme
 from .whitelist import load
 from .fixed_batch import fixed_batch,Journal
 from .batch_ui import prepare_game
@@ -99,6 +100,7 @@ class App:
         self.footer=tk.StringVar(value=f'F8：'+('就緒' if self.safety.hotkey_ok else '不可用，請關閉舊版助手後重開')+'｜紀錄只存本機')
         ttk.Label(outer,textvariable=self.footer).pack(anchor='w',pady=(8,0))
         ttk.Label(outer,text=f'紀錄檔：{self.report}',wraplength=610).pack(anchor='w')
+        self.theme=apply_theme(self)
         root.protocol('WM_DELETE_WINDOW',self.close)
         if load_error:self.fail('無法載入批次進度：'+load_error)
         else:
@@ -125,11 +127,11 @@ class App:
         self.debug_visible=not self.debug_visible
         if self.debug_visible:
             self.body.add(self.debug_panel,weight=1)
-            self.root.geometry(f'1120x{self.root.winfo_height()}')
+            self.theme.resize(expanded=True)
             self.debug_button.configure(text='隱藏除錯紀錄')
         else:
             self.body.forget(self.debug_panel)
-            self.root.geometry(f'660x{self.root.winfo_height()}')
+            self.theme.resize(expanded=False)
             self.debug_button.configure(text='顯示除錯紀錄')
 
     def emit(self,kind,value):
