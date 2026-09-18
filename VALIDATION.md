@@ -371,3 +371,13 @@ User reported the retrieval test passed with 100% accuracy (user-run evidence). 
 - Extracted executable passed offline diagnostics: Tk initialized, 19 whitelist entries, 19 material requests / 57 planned completions, 352 OCR words and 19 detections from the existing private quest fixture, zero game inputs.
 - Packaged main GUI launched with temporary LOCALAPPDATA, exposed the v1.0.0 window title, created its isolated journal, and closed cleanly. Real player data was not modified. Windows FileVersion and ProductVersion both read 1.0.0. This is a startup smoke test, not a live gameplay test.
 - Corrected a build-only relative version-resource path discovered by the first packaging attempt; the successful build uses an absolute path. Gameplay code was not changed during release preparation.
+
+
+## 2026-09-18 Player documentation and single-EXE package
+
+- Rewrote README around player preparation, retrieval, submission, stock checks, pause/recovery, and reset. Removed developer commands, implementation chronology, and contradictory obsolete UI instructions. Changelog now contains player-visible release notes; development history and build instructions remain under docs/ and are excluded from the download.
+- Build uses PyInstaller onefile with the same embedded whitelist, icon, OCR scripts, and version resource. ZIP contains exactly MabinogiAssistant.exe, README.md, and CHANGELOG.md. VALIDATION.md is not a runtime dependency and is no longer packaged.
+- Reviewed the build diff and app resource paths: existing sys._MEIPASS resolution supports extraction; settings remain in LOCALAPPDATA; OCR child process uses the extracted absolute script path. No gameplay code or behavior changed.
+- Tested the EXE alone in an isolated folder with Chinese characters and spaces, without accompanying README/resources and with Python omitted from PATH. Offline Tk/OCR diagnostics passed: 19 whitelist entries, 57 planned completions, 352 OCR words, 19 detections, zero game input. Diagnostic run took 8.50 seconds on this computer.
+- Main GUI title appeared in approximately 2.55 seconds (including polling overhead); isolated settings were preserved, journal initialized, GUI closed cleanly, and onefile temporary runtime was removed after both runs. Real player settings/progress were untouched. These timings are not guarantees for other PCs.
+- CRC, exact ZIP contents, document equality, and SHA-256 checks passed. Existing 289-test release result still applies to unchanged gameplay source. Full live gameplay limitations remain unchanged. Windows Traditional Chinese OCR is still an OS prerequisite; no different recognition engine was introduced.
