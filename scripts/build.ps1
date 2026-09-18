@@ -30,10 +30,10 @@ $ocrData = (Join-Path (Get-Location) 'scripts/ocr.ps1') + ';scripts'
 $workerData = (Join-Path (Get-Location) 'scripts/ocr_worker.ps1') + ';scripts'
 $iconPath = Join-Path (Get-Location) 'assets/app.ico'
 $iconData = $iconPath + ';assets'
-& $Python -m PyInstaller --noconfirm --windowed --onedir --name MabinogiAssistant --distpath $destination --workpath $work --specpath $work --add-data $whitelistData --add-data $ocrData --add-data $workerData --add-data $iconData --icon $iconPath --version-file $versionFile --exclude-module pandas --exclude-module scipy --exclude-module matplotlib --exclude-module IPython --exclude-module pytest main.py
+& $Python -m PyInstaller --noconfirm --windowed --onefile --name MabinogiAssistant --distpath "$destination/MabinogiAssistant" --workpath $work --specpath $work --add-data $whitelistData --add-data $ocrData --add-data $workerData --add-data $iconData --icon $iconPath --version-file $versionFile --exclude-module pandas --exclude-module scipy --exclude-module matplotlib --exclude-module IPython --exclude-module pytest main.py
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed' }
-Copy-Item README.md,CHANGELOG.md,VALIDATION.md "$destination/MabinogiAssistant/"
-$zip = "dist/MabinogiAssistant-$Version-$stamp.zip"
+Copy-Item README.md,CHANGELOG.md "$destination/MabinogiAssistant/"
+$zip = "dist/MabinogiAssistant-$Version-single-exe-$stamp.zip"
 Compress-Archive -Path "$destination/MabinogiAssistant" -DestinationPath $zip
 $checksum = "$zip.sha256"
 $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
