@@ -232,7 +232,8 @@ class DashboardTests(unittest.TestCase):
         self.app.close();self.root=tk.Tk();self.root.withdraw();self.app=App(self.root)
         self.assertEqual(self.app.journal.data['withdrawn'],[])
         self.assertIn('0/19',self.app.summary.get())
-        self.assertEqual(self.root.title(),'瑪奇M - 兼職小助手 v0.2.0-dev')
+        from app.version import APP_VERSION
+        self.assertEqual(self.root.title(),f'瑪奇M - 兼職小助手 v{APP_VERSION}')
         texts=[str(w.cget('text')) for w in self.widgets(self.root) if w.winfo_class() in ('TLabel','TButton')]
         self.assertFalse(any('19 種素材領取' in t or t=='確認新批次' for t in texts))
         import json
