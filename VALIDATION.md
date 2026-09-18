@@ -381,3 +381,19 @@ User reported the retrieval test passed with 100% accuracy (user-run evidence). 
 - Tested the EXE alone in an isolated folder with Chinese characters and spaces, without accompanying README/resources and with Python omitted from PATH. Offline Tk/OCR diagnostics passed: 19 whitelist entries, 57 planned completions, 352 OCR words, 19 detections, zero game input. Diagnostic run took 8.50 seconds on this computer.
 - Main GUI title appeared in approximately 2.55 seconds (including polling overhead); isolated settings were preserved, journal initialized, GUI closed cleanly, and onefile temporary runtime was removed after both runs. Real player settings/progress were untouched. These timings are not guarantees for other PCs.
 - CRC, exact ZIP contents, document equality, and SHA-256 checks passed. Existing 289-test release result still applies to unchanged gameplay source. Full live gameplay limitations remain unchanged. Windows Traditional Chinese OCR is still an OS prerequisite; no different recognition engine was introduced.
+
+## 2026-09-18 Shellfish quantity retry
+
+- User log: 19:50 run counted shellfish 58; 20:02 run recognized its name but all eight count methods returned None. Final result correctly remained uncertain, although the player table displayed zero recognized stock.
+- Supplied 1832x955 screenshot replay (left game area cropped, no scaling) reads shellfish 58. A screenshot-derived count box displaced downward by 12 pixels reproduces eight empty readings. This demonstrates sensitivity to row/crop position; the actual failing capture was not available, so the precise live cause is not proven.
+- Only an all-empty count result receives three bounded same-cell vertical retries. Each position requires multiple agreeing OCR methods; at least two positions must produce the same count. Conflicting/nonempty original readings retain their existing unresolved behavior; confirmed stacks are untouched. Screenshot-derived failure recovered 58.
+- Reviewed scope, crop bounds, cancellation checks before/after each OCR batch, quantity consensus, and no inferred/expected counts. No gameplay input, state reset, or running-player process changes were made.
+- Corrected an existing GUI regression assertion that still expected the pre-release title version; it now uses APP_VERSION.
+- Full regression run: 294 tests, 293 passed and one skipped because the running application owns F8. No failures. Live shellfish scan remains to be verified with the local test package.
+
+## 2026-09-18 Version 1.0.1 release
+
+- Final release regression: all 294 tests passed in 22.750 seconds, no skips or failures.
+- Reviewed bounded count retry, same-cell bounds, two-position agreement, no retry for nonempty/conflicting initial counts, cancellation before/after OCR, and preservation of confirmed stacks. No additional blocking findings identified. Actual failing capture was unavailable; the log and screenshot-derived crop failure support the targeted fix, while live scan validation remains outstanding.
+- Version 1.0.1 matches the app source, player README, changelog, executable FileVersion/ProductVersion, and ZIP. Packaged code includes retry_missing_count.
+- Final three-file ZIP passed CRC, content equality, and SHA-256 checks. EXE-alone diagnostics in an isolated Chinese/spaced path passed Tk and OCR (352 words, 19 detections, zero game inputs). GUI showed v1.0.1, preserved isolated settings, closed cleanly, and removed extracted runtime files. No player data or game input was changed.

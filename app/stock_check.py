@@ -267,10 +267,51 @@ class StockVision:
                 count = (ranked[0][0] if ranked and ranked[0][1]>=2
                          and (len(ranked)==1 or ranked[0][1]>ranked[1][1]) else None)
                 cell = cells[slot]
+                if not votes:
+                    count = self.retry_missing_count(image, group[index][1], check)
+                    if count is not None:
+                        self.log(f'數量局部補讀：{cell.name} × {count}')
                 if count is None:
                     self.log(f'數量待核：{cell.name}，各方法讀值 {values}')
                 cells[slot] = StockCell(cell.column, cell.y, cell.name, count, count is None)
         return cells
+
+
+    def retry_missing_count(self, image, box, check):
+        """Recover an empty count crop only when two nearby positions agree."""
+        left, top, right, bottom = box
+        candidates = []
+        for offset in (-12, -24, 12):
+            check()
+            if top+offset < 275 or bottom+offset > min(955,image.height):
+                continue
+            raw = image.crop((left,top+offset,right,bottom+offset))
+            gray = raw.convert('L')
+            crops = []
+            for threshold in (150,185,215):
+                digit = ImageOps.invert(gray.point(lambda p:255 if p>threshold else 0))
+                canvas = Image.new('RGB',(420,172),'white')
+                ImageDraw.Draw(canvas).text((8,53),'Qty',font=ImageFont.load_default(size=34),fill='black')
+                canvas.paste(digit.resize((digit.width*4,digit.height*4)),(120,16))
+                crops.extend([ImageOps.expand(digit.resize((digit.width*4,digit.height*4)),16,'white'),canvas])
+            crops.extend(ImageOps.expand(im.resize((im.width*3,im.height*3)),16,'white')
+                         for im in (raw,ImageOps.autocontrast(gray)))
+            results = self.vision.session.recognize_many(crops)
+            check()
+            votes = Counter()
+            for method, words in enumerate(results):
+                x = 120 if method < 6 and method % 2 else 16
+                width,height = (207,105) if method>=6 else (276,140)
+                value = parse_count([w for w in words if w['x']>=x and w['y']>=16
+                                    and w['h']>=12 and w['x']+w['w']<=x+width
+                                    and w['y']+w['h']<=16+height])
+                if value is not None:votes[value]+=1
+            ranked = votes.most_common()
+            if ranked and ranked[0][1]>=2 and (len(ranked)==1 or ranked[0][1]>ranked[1][1]):
+                candidates.append(ranked[0][0])
+            elif votes:
+                return None  # A conflicting nearby crop is not evidence of recovery.
+        return candidates[0] if len(candidates)>=2 and len(set(candidates))==1 else None
 
 
 class StockScanner:

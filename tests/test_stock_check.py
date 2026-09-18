@@ -414,3 +414,48 @@ class AdaptiveStockScrollTests(unittest.TestCase):
         self.assertEqual(frames,[('525',525)])
         self.assertEqual(scanner.move.call_count,3)
         self.assertEqual([c.kwargs['notches'] for c in scanner.move.call_args_list],[4,12,5])
+
+class MissingStockCountRetryTests(unittest.TestCase):
+    def readings(self, value):
+        return [[word(str(value),140 if i<6 and i%2 else 20)] for i in range(8)]
+
+    def reader(self):
+        vision=Mock()
+        vision.storage_names.return_value=[Label('貝類',(152,753,246,813))]
+        vision.storage_names_retry.return_value=[]
+        vision._storage_boxes=[(152,818,246,848)]
+        return StockVision(vision,[Quest('shell','貝類',10)])
+
+    def test_empty_quantity_recovers_only_from_two_agreeing_positions(self):
+        reader=self.reader()
+        reader.vision.session.recognize_many.side_effect=[
+            [[] for _ in range(8)],self.readings(58),self.readings(58),[[] for _ in range(8)]]
+        cell=reader.cells(Image.new('RGB',(1280,960)))[0]
+        self.assertEqual((cell.name,cell.count,cell.uncertain),('貝類',58,False))
+        self.assertEqual(reader.vision.session.recognize_many.call_count,4)
+
+    def test_single_position_or_disagreement_stays_unknown(self):
+        for values in ((58,None,None),(58,59,None),(None,None,None)):
+            reader=self.reader()
+            reader.vision.session.recognize_many.side_effect=[
+                self.readings(value) if value else [[] for _ in range(8)] for value in values]
+            self.assertIsNone(reader.retry_missing_count(Image.new('RGB',(1280,960)),(177,778,246,813),lambda:None))
+
+    def test_conflicting_methods_do_not_trigger_crop_retry(self):
+        reader=self.reader()
+        reader.vision.session.recognize_many.return_value=self.readings(58)[:4]+self.readings(59)[4:]
+        cell=reader.cells(Image.new('RGB',(1280,960)))[0]
+        self.assertIsNone(cell.count)
+        self.assertEqual(reader.vision.session.recognize_many.call_count,1)
+
+    def test_confirmed_count_never_triggers_extra_ocr(self):
+        reader=self.reader();reader.vision.session.recognize_many.return_value=self.readings(58)
+        self.assertEqual(reader.cells(Image.new('RGB',(1280,960)))[0].count,58)
+        self.assertEqual(reader.vision.session.recognize_many.call_count,1)
+
+    def test_cancel_after_retry_ocr_prevents_acceptance_or_more_reads(self):
+        reader=self.reader();reader.vision.session.recognize_many.return_value=self.readings(58)
+        check=Mock(side_effect=[None,RuntimeError('F8')])
+        with self.assertRaisesRegex(RuntimeError,'F8'):
+            reader.retry_missing_count(Image.new('RGB',(1280,960)),(177,778,246,813),check)
+        self.assertEqual(reader.vision.session.recognize_many.call_count,1)
