@@ -1,5 +1,6 @@
+"""Name suggestions used by the command-line diagnostic preview."""
 import unittest
-from app.name_candidates import suggest,make_review,ReviewSession
+from app.name_candidates import suggest,make_review
 from app.recognition import Detection
 from app.whitelist import validate
 Q=validate([('採集卷軸: 小麥','小麥',10),('採集卷軸: 咻咻蘑菇','咻咻蘑菇',20),('採礦卷軸: 鐵礦石','鐵礦石',20),('採集卷軸: 高級原木+','高級原木+',20),('採集卷軸: 蜘蛛絲','蜘蛛網',10),('料理卷軸: 蘋果汁','蘋果汁',5)])
@@ -27,38 +28,7 @@ class NameCandidateTests(unittest.TestCase):
         item=Detection('未確認卷軸',None,(0,0,96,40),'','unconfirmed','採集卷軸:灰蘑菇')
         review=make_review(0,item,3,entries)
         self.assertTrue(review.ambiguous)
-        session=ReviewSession();token=session.reset([item],[review])
-        with self.assertRaises(ValueError):session.decide(token,[0],True)
-        self.assertEqual(session.detections[0].count,None)
+        self.assertFalse(review.can_accept)
 
-class ReviewTests(unittest.TestCase):
-    def make(self,raw='採集卷:小麥',count=None):
-        item=Detection('未確認卷軸',None,(0,0,96,40),'','unconfirmed',raw)
-        review=make_review(0,item,count,Q)
-        session=ReviewSession();token=session.reset([item],[review])
-        return session,token
-    def test_no_automatic_acceptance(self):
-        s,t=self.make(count=3)
-        self.assertIsNone(s.detections[0].count)
-        self.assertEqual(s.items[0].state,'pending')
-    def test_accept_keeps_unknown_count_unknown(self):
-        s,t=self.make()
-        result=s.decide(t,[0],True)
-        self.assertEqual(result[0].kind,'quest_reviewed')
-        self.assertIsNone(result[0].count)
-    def test_accept_uses_only_observed_count(self):
-        s,t=self.make(count=3)
-        self.assertEqual(s.decide(t,[0],True)[0].count,3)
-    def test_reject_never_changes_original(self):
-        s,t=self.make(count=3)
-        self.assertEqual(s.decide(t,[0],False)[0].kind,'unconfirmed')
-        with self.assertRaises(ValueError):s.decide(t,[0],True)
-    def test_refresh_invalidates_old_review(self):
-        s,t=self.make(count=3);s.reset()
-        with self.assertRaises(ValueError):s.decide(t,[0],True)
-    def test_conflict_rejected_by_bulk_accept(self):
-        s,t=self.make('採集卷軸:鐵礦石',3)
-        with self.assertRaises(ValueError):s.decide(t,[0],True)
-        self.assertEqual(s.decide(t,[0],True,True)[0].name,'採礦卷軸: 鐵礦石')
 
 if __name__=='__main__':unittest.main()

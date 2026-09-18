@@ -35,51 +35,15 @@ class DashboardTests(unittest.TestCase):
 
     def test_progress_and_stop_reason_remain_visible(self):
         self.app.busy=True;self.safety.paused=False
-        self.app.emit('progress',{'step':'核對输入的領取量','item':'鐵礦石','quantity':60})
-        self.app.log('數量欄核對：要求 60；讀回 1')
-        self.app.emit('error','鐵礦石：要求 60，讀回 1；未按下領取。')
+        self.app.emit('progress',{'step':'等待移至背包按鈕就緒','item':'鐵礦石','quantity':60})
+        self.app.log('移至背包按鈕未就緒；未送出領取。')
+        self.app.emit('error','鐵礦石：移至背包按鈕未就緒；未送出領取。')
         self.app.poll()
         self.assertIn('鐵礦石 × 60',self.app.item_text.get())
-        self.assertIn('讀回 1',self.app.stop_reason.get())
-        self.assertIn('數量欄核對',self.app.debug.get('1.0','end'))
+        self.assertIn('按鈕未就緒',self.app.stop_reason.get())
+        self.assertIn('未送出領取',self.app.debug.get('1.0','end'))
         self.assertFalse(self.app.busy)
-        self.app.poll();self.assertIn('讀回 1',self.app.stop_reason.get())
-    def test_name_confirmation_keeps_worker_and_progress(self):
-        from app.name_memory import NameReviewRequired
-        review=NameReviewRequired('箭花','花');review.answered=threading.Event();review.accepted=False
-        self.app.busy=True;self.app.journal.data['withdrawn']=['鐵礦石']
-        self.app.emit('name_review',review);self.app.poll()
-        self.assertTrue(self.app.busy)
-        self.app.answer_name(True)
-        self.assertTrue(review.answered.is_set());self.assertTrue(review.accepted)
-        self.assertTrue(self.app.busy)
-        self.assertEqual(self.app.journal.data['withdrawn'],['鐵礦石'])
-        self.assertTrue(self.app.name_memory.matches('花','箭花'))
-    def test_reject_name_does_not_remember(self):
-        from app.name_memory import NameReviewRequired
-        review=NameReviewRequired('箭花','花');review.answered=threading.Event();review.accepted=False
-        self.app.emit('name_review',review);self.app.poll();self.app.answer_name(False)
-        self.assertTrue(review.answered.is_set());self.assertFalse(review.accepted)
-        self.assertFalse(self.app.name_memory.aliases)
-    def test_name_review_worker_resumes_after_yes_without_restarting(self):
-        from app.name_memory import NameReviewRequired
-        review=NameReviewRequired('箭花','花');window=Mock();window.hwnd=42
-        def emit(kind,value):
-            if kind=='name_review':
-                value.accepted=True;value.answered.set()
-        self.app.emit=emit
-        with patch('app.gui.focus_game'),patch('app.gui.prepare_game',return_value=window),patch.object(self.safety.cancelled,'wait',return_value=False):
-            self.app.review_name(review,window)
-        self.safety.prepare.assert_called_once()
-    def test_f8_during_name_review_does_not_resume(self):
-        from app.name_memory import NameReviewRequired
-        review=NameReviewRequired('箭花','花')
-        def emit(kind,value):
-            if kind=='name_review':self.safety.pause('F8 緊急停止')
-        self.app.emit=emit
-        with patch('app.gui.focus_game'),patch('app.gui.prepare_game') as prepare:
-            with self.assertRaises(RuntimeError):self.app.review_name(review,Mock())
-            prepare.assert_not_called()
+        self.app.poll();self.assertIn('按鈕未就緒',self.app.stop_reason.get())
     def test_manual_shortfall_does_not_gate_quests(self):
         self.app.journal.data['withdrawn']=[m.name for m in self.app.batch.materials if m.name!='洋蔥']
         self.app.journal.skip('洋蔥','未找到')
@@ -88,10 +52,7 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.app.manual_frame.winfo_manager(),'pack')
         self.assertIn('洋蔥 × 30',self.app.manual_list.get(0))
         self.assertEqual(str(self.app.quest_button['state']),'normal')
-        self.app.manual_list.selection_set(0);self.app.confirm_manual()
-        self.assertIn('洋蔥',self.app.journal.data['manual'])
-        self.assertEqual(str(self.app.quest_button['state']),'normal')
-    def test_new_batch_precedes_withdraw_and_notice_is_emphasized(self):
+    def test_action_controls_are_on_their_tabs_and_notice_is_visible(self):
         self.assertIs(self.app.withdraw_button.master,self.app.withdraw_panel)
         self.assertEqual(self.app.new_button.cget('text'),'重置')
         self.assertIs(self.app.board_check.master,self.app.quest_panel)

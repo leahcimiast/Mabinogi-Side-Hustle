@@ -267,8 +267,12 @@ class StockVision:
                 count = (ranked[0][0] if ranked and ranked[0][1]>=2
                          and (len(ranked)==1 or ranked[0][1]>ranked[1][1]) else None)
                 cell = cells[slot]
-                if not votes:
-                    count = self.retry_missing_count(image, group[index][1], check)
+                if count is None and len(votes) <= 1:
+                    if not votes:
+                        count = self.retry_missing_count(image, group[index][1], check)
+                    if count is None:
+                        count = self.retry_neutral_count(image, group[index][1], check,
+                                                         next(iter(votes), None))
                     if count is not None:
                         self.log(f'數量局部補讀：{cell.name} × {count}')
                 if count is None:
@@ -276,6 +280,50 @@ class StockVision:
                 cells[slot] = StockCell(cell.column, cell.y, cell.name, count, count is None)
         return cells
 
+
+    def retry_neutral_count(self, image, box, check, expected=None):
+        """Remove colored icon pixels without trimming possible leading digits."""
+        left, top, right, bottom = box
+        candidates = []
+        observations = []
+        for offset in (-16, -12, -8, -4, 0, 4):
+            check()
+            if top+offset < 275 or bottom+offset > min(955, image.height):
+                continue
+            raw = image.crop((left, top+offset, right, bottom+offset)).convert('RGB')
+            crops = []
+            for spread in (20, 40):
+                mask = Image.new('L', raw.size)
+                mask.putdata([0 if min(pixel)>150 and max(pixel)-min(pixel)<spread else 255
+                              for pixel in raw.get_flattened_data()])
+                digits = mask.resize((raw.width*4, raw.height*4))
+                canvas = Image.new('RGB', (420, 172), 'white')
+                ImageDraw.Draw(canvas).text((8, 53), 'Qty', font=ImageFont.load_default(size=34), fill='black')
+                canvas.paste(digits, (120, 16))
+                crops.extend([ImageOps.expand(digits, 16, 'white'), canvas])
+            results = self.vision.session.recognize_many(crops)
+            check()
+            votes = Counter()
+            for method, words in enumerate(results):
+                x = 120 if method % 2 else 16
+                value = parse_count([w for w in words if w['x']>=x and w['y']>=16
+                                    and w['h']>=12 and w['x']+w['w']<=x+raw.width*4
+                                    and w['y']+w['h']<=16+raw.height*4])
+                if value is not None:
+                    votes[value] += 1
+            # Every numeric reading must agree, including any original weak vote.
+            observations.append(f'{offset:+d}px={dict(votes)}')
+            if not votes:
+                continue
+            if len(votes)!=1 or (expected is not None and next(iter(votes))!=expected):
+                self.log('數量去色補讀衝突：'+'；'.join(observations))
+                return None
+            if next(iter(votes.values()))>=2:
+                candidates.append(next(iter(votes)))
+            # Even a single conflicting numeric reading must not be discarded.
+            expected = next(iter(votes))
+        self.log('數量去色補讀：'+'；'.join(observations))
+        return candidates[0] if len(candidates)>=2 else None
 
     def retry_missing_count(self, image, box, check):
         """Recover an empty count crop only when two nearby positions agree."""

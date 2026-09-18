@@ -44,9 +44,9 @@ class WithdrawalTests(unittest.TestCase):
         self.runner.screen=Mock(return_value=self.screen)
         self.runner.wait=Mock(return_value=self.screen)
         self.runner.vision.storage_names=Mock(return_value=[Label('鐵礦石',(250,350,340,390))])
-        self.runner.vision.entered_quantity=Mock(return_value=60)
+        self.runner.vision.entered_quantity=Mock(side_effect=AssertionError("withdrawal must not read back quantity"))
         self.runner.vision.storage_names_retry=Mock(return_value=[])
-        self.runner.vision.tooltip_retry=Mock(return_value=[])
+        self.runner.vision.tooltip_retry=Mock(side_effect=AssertionError("withdrawal must use the storage-list name"))
     def tearDown(self):self.temp.cleanup()
     def test_quantity_field_gets_focus_delay_before_typing(self):
         events=Mock()
@@ -76,18 +76,6 @@ class WithdrawalTests(unittest.TestCase):
         self.assertIsNone(self.j.data['pending'])
         self.assertNotIn('鐵礦石',self.j.data['withdrawn'])
 
-    def test_missing_title_does_not_block_matching_number(self):
-        self.screen.item_title.return_value=None
-        self.screen.tooltip_titles.return_value=[]
-        self.assertEqual(self.runner.verify_quantity('箭花',60),60)
-        self.screen.item_title.assert_not_called()
-        self.runner.vision.tooltip_retry.assert_not_called()
-        self.runner.click.assert_not_called()
-    def test_transient_dialog_failure_rechecks_same_frame_identity(self):
-        self.screen.quantity_dialog.side_effect=[False,True]
-        self.assertEqual(self.runner.verify_quantity('箭花',60),60)
-        self.runner.vision.entered_quantity.assert_called_once()
-        self.runner.click.assert_not_called()
     def test_confirmed_transfer_not_repeated(self):
         self.runner.withdrawal();calls=self.runner.click.call_count
         self.runner.withdrawal();self.assertEqual(self.runner.click.call_count,calls)
@@ -125,18 +113,12 @@ class QuestLoopTests(unittest.TestCase):
             runner=Runner(Mock(),Mock(),Mock(),j,ENTRIES,Path('scripts/ocr.ps1'))
             runner.rest=Mock();runner.click=Mock();runner.key=Mock();runner.find_scroll=Mock()
             screen=Mock();screen.tracker.return_value=Label('取得鐵礦石',(1000,240,1150,265));screen.report.return_value=Label('回報任務',(1000,270,1150,290))
-            screen.submission.return_value=True;screen.has.return_value=True;screen.submitted_ready.return_value=True
+            screen.submission.return_value=True;screen.autofill_enabled.return_value=True;screen.submitted_ready.return_value=True
             runner.screen=Mock(side_effect=[screen,screen,RuntimeError('lost screen after submit')])
             with self.assertRaises(RuntimeError):runner.quests()
             self.assertEqual(j.data['pending']['kind'],'complete');self.assertEqual(j.data['completed'],0)
             runner.find_scroll.assert_not_called()
             with self.assertRaises(RuntimeError):runner.quests()
-    def test_no_unknown_active_state_assumption(self):
-        with tempfile.TemporaryDirectory() as d:
-            j=Journal(Path(d)/'p.json',fixed_batch(ENTRIES));j.data['withdrawn']=[m.name for m in j.batch.materials]
-            runner=Runner(Mock(),Mock(),Mock(),j,ENTRIES,Path('scripts/ocr.ps1'));runner.screen=Mock(side_effect=RuntimeError("game check reached"))
-            with self.assertRaises(RuntimeError):runner.quests()
-            runner.screen.assert_called_once()
 
     def test_submission_without_retrieval_reaches_game_checks(self):
         with tempfile.TemporaryDirectory() as d:

@@ -88,18 +88,18 @@ class StockVisionTests(unittest.TestCase):
     def test_counts_require_agreement_and_stay_left(self):
         reader=self.reader([Label('鐵礦石',(57,281,151,341))])
         reader.vision.session.recognize_many.return_value=[
-            [word('300',20 if i%2==0 else 140)] for i in range(6)]
+            [word('300',140 if i<6 and i%2 else 20)] for i in range(8)]
         cell=reader.cells(Image.new('RGB',(1280,960)))[0]
         self.assertEqual((cell.name,cell.count,cell.uncertain),('鐵礦石',300,False))
         reader.vision.session.recognize_many.return_value=[
-            [word('300' if i<3 else '800',20 if i%2==0 else 140)] for i in range(6)]
+            [word('300' if i<4 else '800',140 if i<6 and i%2 else 20)] for i in range(8)]
         self.assertTrue(reader.cells(Image.new('RGB',(1280,960)))[0].uncertain)
 
     def test_last_fully_visible_name_row_is_counted(self):
         reader=self.reader([Label('鐵礦石',(57,860,151,920))])
         reader.vision._storage_boxes=[(57,925,151,955)]
         reader.vision.session.recognize_many.return_value=[
-            [word('80',20 if i%2==0 else 140)] for i in range(6)]
+            [word('80',140 if i<6 and i%2 else 20)] for i in range(8)]
         self.assertEqual(reader.cells(Image.new('RGB',(1280,960)))[0].count,80)
 
     def test_grade_plus_conflict_never_counted(self):
@@ -224,11 +224,14 @@ class StockUITests(unittest.TestCase):
         result=StockResult();result.add([StockCell(0,346,'鐵礦石',60)],0)
         panel.set_result(result)
         self.assertEqual(panel.tree.item('鐵礦石','tags'),('enough',))
-        self.assertEqual(panel.tree.item('蜘蛛網','tags'),('missing',))
-        self.assertEqual(panel.tree.item('蜘蛛網','values')[-1],'30')
+        self.assertEqual(panel.tree.item('蜘蛛網','tags'),('unknown',))
+        self.assertEqual(panel.tree.item('蜘蛛網','values')[-1],'待確認')
+        self.assertIn('蜘蛛網\t30\t0\t待確認',panel.text())
         panel.cycles.set('2');panel.render()
+        self.assertEqual(panel.tree.item('鐵礦石','tags'),('unknown',))
+        result.complete=True;panel.render()
         self.assertEqual(panel.tree.item('鐵礦石','tags'),('missing',))
-        self.assertNotIn('待核',panel.text())
+        self.assertEqual(panel.tree.item('鐵礦石','values')[-1],'60')
 
     def test_action_timer_freezes_at_worker_end_and_resets_for_next_action(self):
         self.root.after_cancel(self.app.after_id)
@@ -262,7 +265,6 @@ class StockUITests(unittest.TestCase):
             self.assertFalse(self.app.worker.is_alive())
             ready.assert_not_called();runner.assert_not_called()
         self.assertEqual(self.app.journal.data,before)
-
 
 
 class StockImprovementTests(unittest.TestCase):
@@ -459,3 +461,74 @@ class MissingStockCountRetryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'F8'):
             reader.retry_missing_count(Image.new('RGB',(1280,960)),(177,778,246,813),check)
         self.assertEqual(reader.vision.session.recognize_many.call_count,1)
+
+
+class NeutralStockCountRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.image=Image.new('RGB',(1280,960),(40,45,55))
+        self.reader=StockVision(Mock(),[Quest('shell','貝類',10)])
+        self.box=(177,400,246,435)
+
+    def readings(self,value):
+        return [[word(str(value),140 if i%2 else 20)] for i in range(4)]
+
+    def test_two_positions_and_methods_agree_with_weak_original(self):
+        self.reader.vision.session.recognize_many.return_value=self.readings(57)
+        self.assertEqual(self.reader.retry_neutral_count(self.image,self.box,lambda:None,57),57)
+        self.assertEqual(self.reader.vision.session.recognize_many.call_count,6)
+
+    def test_conflict_sparse_or_different_original_stays_unknown(self):
+        for batches,expected in (([self.readings(57),self.readings(58)],None),
+                                  ([[[word('57')],[],[],[]]]*6,None),
+                                  ([self.readings(57)],58)):
+            with self.subTest(batches=batches,expected=expected):
+                session=self.reader.vision.session
+                session.recognize_many.side_effect=batches
+                self.assertIsNone(self.reader.retry_neutral_count(self.image,self.box,lambda:None,expected))
+        self.reader.vision.session.recognize_many.side_effect=None
+        self.reader.vision.session.recognize_many.return_value=self.readings(57)[:2]+self.readings(58)[2:]
+        self.assertIsNone(self.reader.retry_neutral_count(self.image,self.box,lambda:None))
+
+    def test_mask_preserves_full_width_and_removes_colored_icon(self):
+        self.image.putpixel((178,385),(255,255,255))
+        self.image.putpixel((179,385),(255,190,110))
+        self.reader.vision.session.recognize_many.return_value=[[],[],[],[]]
+        self.reader.retry_neutral_count(self.image,self.box,lambda:None)
+        crop=self.reader.vision.session.recognize_many.call_args_list[0].args[0][0]
+        self.assertEqual(crop.size,(69*4+32,35*4+32))
+        self.assertLess(crop.getpixel((21,21)),100)
+        self.assertGreater(crop.getpixel((25,21)),200)
+
+    def test_cancel_after_ocr_blocks_second_position(self):
+        self.reader.vision.session.recognize_many.return_value=self.readings(57)
+        check=Mock(side_effect=[None,RuntimeError('F8')])
+        with self.assertRaisesRegex(RuntimeError,'F8'):
+            self.reader.retry_neutral_count(self.image,self.box,check)
+        self.assertEqual(self.reader.vision.session.recognize_many.call_count,1)
+
+    def test_weak_original_enters_fallback_and_keeps_material_identity(self):
+        reader=MissingStockCountRetryTests().reader()
+        reader.vision.session.recognize_many.return_value=[[word('57')]]+[[] for _ in range(7)]
+        reader.retry_missing_count=Mock(side_effect=AssertionError('not an empty original'))
+        reader.retry_neutral_count=Mock(return_value=57)
+        cell=reader.cells(self.image)[0]
+        self.assertEqual((cell.name,cell.count,cell.uncertain),('貝類',57,False))
+        self.assertEqual(reader.retry_neutral_count.call_args.args[-1],57)
+
+    def test_three_digit_counts_remain_intact(self):
+        self.reader.vision.session.recognize_many.return_value=self.readings(157)
+        self.assertEqual(self.reader.retry_neutral_count(self.image,self.box,lambda:None),157)
+
+    def test_retry_never_reads_beyond_panel_bottom(self):
+        self.assertIsNone(self.reader.retry_neutral_count(self.image,(177,978,246,1013),lambda:None))
+        self.reader.vision.session.recognize_many.assert_not_called()
+
+    def test_downward_misalignment_recovers_from_two_upward_positions(self):
+        self.reader.vision.session.recognize_many.side_effect=[
+            self.readings(57),self.readings(57)]+[[[],[],[],[]]]*4
+        self.assertEqual(self.reader.retry_neutral_count(self.image,self.box,lambda:None),57)
+
+    def test_one_readable_position_does_not_confirm_count(self):
+        self.reader.vision.session.recognize_many.side_effect=[
+            self.readings(57)]+[[[],[],[],[]]]*5
+        self.assertIsNone(self.reader.retry_neutral_count(self.image,self.box,lambda:None))

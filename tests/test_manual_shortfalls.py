@@ -23,9 +23,8 @@ class ShortfallTests(unittest.TestCase):
         self.runner.withdrawal();self.assertEqual(calls,[first.name,second.name])
         restored=Journal(self.j.path,self.j.batch)
         self.assertEqual(restored.data['skipped'],{first.name:'not found'})
-        restored.confirm_manual(first.name)
-        self.assertIn(first.name,restored.data['manual'])
-        self.assertEqual(len(restored.data['withdrawn']),19)
+        self.assertNotIn(first.name,restored.data['withdrawn'])
+        self.assertIn(second.name,restored.data['withdrawn'])
     def test_pending_transfer_never_becomes_skipped(self):
         def withdraw(item,screen):
             self.j.begin('withdraw',item.name);raise ScreenTimeout('lost confirmation')
@@ -49,9 +48,6 @@ class ShortfallTests(unittest.TestCase):
         self.runner.screen=Mock(return_value=unknown)
         with self.assertRaises(RuntimeError):self.runner.restore_storage()
         self.runner.key.assert_not_called()
-    def test_manual_confirmation_blocked_by_unresolved_transfer(self):
-        self.j.skip('鐵礦石','missing');self.j.begin('withdraw','鐵礦石')
-        with self.assertRaises(RuntimeError):self.j.confirm_manual('鐵礦石')
 
     def test_closing_animation_does_not_send_escape_twice(self):
         overlay=Mock();overlay.storage.return_value=False;overlay.quantity_dialog.return_value=True

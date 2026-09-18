@@ -126,6 +126,17 @@ class TrackerRecognitionTests(unittest.TestCase):
         self.assertIsNotNone(screen.report());self.assertTrue(screen.world())
         self.assertEqual(session.recognize_many.call_count,2)
 
+    def test_three_character_report_cues_are_shared_and_region_limited(self):
+        for text in ('告回報','佈回報','欄回報','向務告回報','回報告'):
+            with self.subTest(text=text):
+                self.assertIsNotNone(Screen(self.image,[word(text,1200,282,65,14)]).report())
+                self.assertIsNone(Screen(self.image,[word(text,500,282,65,14)]).report())
+        for text in ('回報','報報報','向其他人回報','佈告欄','持有貝類10/10'):
+            self.assertIsNone(Screen(self.image,[word(text,1130,282,135,14)]).report())
+        with self.assertRaisesRegex(RuntimeError,'多個'):
+            MultiScreen(self.image,[[word('告回報',1200,282,65,14),
+                                    word('欄回報',1200,400,65,14)]]).report()
+
 class TrackerRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory()
@@ -150,10 +161,6 @@ class TrackerRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError,'身份不明'):self.r.quests()
         self.r.find_scroll.assert_not_called();self.r.click.assert_not_called()
         self.assertIsNone(self.journal.data['active'])
-    def test_saved_full_title_resumes_with_missing_prefix(self):
-        self.journal.data['active']={'index':0,'identity':'取得鐵礦石'}
-        with self.assertRaisesRegex(RuntimeError,'submission reached'):self.r.quests()
-        self.r.find_scroll.assert_not_called();self.assertEqual(self.r.click.call_count,1)
     def test_unresolved_activation_still_requires_reconciliation(self):
         self.journal.begin('activate',{'index':0,'identity':None})
         with self.assertRaisesRegex(RuntimeError,'結果未確認'):self.r.quests()

@@ -67,7 +67,6 @@ class SearchContinuationTests(unittest.TestCase):
         self.j.data['withdrawn']=[m.name for m in self.j.batch.materials if m.name!='箭花']
         exact=Label('箭花',(350,350,440,390))
         self.runner.vision.storage_names.return_value=[Label('花',(250,350,340,390)),exact]
-        self.runner.vision.entered_quantity.return_value=next(m.quantity for m in self.j.batch.materials if m.name=='箭花')
         self.runner.withdrawal()
         self.assertEqual(self.runner.click.call_args_list[0].args,(exact.point,))
         self.assertIn('箭花',self.j.data['withdrawn'])
@@ -99,7 +98,6 @@ class SearchContinuationTests(unittest.TestCase):
         self.j.data['withdrawn']=[m.name for m in self.j.batch.materials if m.name!='洋蔥']
         candidate=Label('洋蒽',(250,350,340,390))
         self.runner.vision.storage_names.return_value=[candidate]
-        self.runner.vision.entered_quantity.return_value=30
         self.runner.on_name_review=Mock()
         self.runner.withdrawal()
         self.assertIn('洋蔥',self.j.data['withdrawn'])
@@ -139,7 +137,6 @@ class SearchContinuationTests(unittest.TestCase):
         target=Label('烤整顆馬鈴',(437,290,531,320))
         self.runner.vision.storage_names.return_value=[target,Label('馬鈴薯',(342,650,436,680))]
         self.runner.vision.storage_names_retry.return_value=[Label('烤整馬鈴薯',target.box),Label('烤整顆馬',target.box)]
-        self.runner.vision.entered_quantity.return_value=15
         self.runner.scroll_storage=Mock()
         self.runner.withdrawal()
         self.runner.storage_top.assert_not_called()

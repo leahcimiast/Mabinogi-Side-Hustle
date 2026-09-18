@@ -50,6 +50,7 @@ class StockPanel:
         scroll.pack(side='right', fill='y')
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.tag_configure('missing', foreground='#F3B3B3', background='#442C30')
+        self.tree.tag_configure('unknown', foreground='#F0D49A', background='#443D2C')
         self.tree.tag_configure('enough', foreground='#A8DFB8', background='#254236')
         self.render()
 
@@ -61,13 +62,14 @@ class StockPanel:
     def render(self):
         rows = self.result.rows(self.app.quests, int(self.cycles.get()))
         for name, required, stock, missing in rows:
-            values=(name, required, stock, max(0,required-stock))
+            values=(name, required, stock, '待確認' if missing is None else missing)
+            tag = 'unknown' if missing is None else 'enough' if missing == 0 else 'missing'
             if self.tree.exists(name):
-                self.tree.item(name, values=values, tags=('enough',) if stock >= required else ('missing',))
+                self.tree.item(name, values=values, tags=(tag,))
             else:
-                self.tree.insert('', 'end', iid=name, values=values, tags=('enough',) if stock >= required else ('missing',))
+                self.tree.insert('', 'end', iid=name, values=values, tags=(tag,))
         uncertain = sum(row[3] is None for row in rows)
-        note = '缺額依已辨識庫存估算；掃描未完成或辨識不完整時可能高估。'+ self.result.note + (f'｜{uncertain} 種缺額待確認。' if uncertain else '')
+        note = '已辨識庫存僅計入確認數量；無法確認缺額時顯示「待確認」。'+ self.result.note + (f'｜{uncertain} 種缺額待確認。' if uncertain else '')
         if self.scanned_at: note += f'｜掃描時間 {self.scanned_at}（快照）'
         self.status.set(note)
 
@@ -84,10 +86,11 @@ class StockPanel:
     def text(self):
         lines = [f'公用保管箱盤點｜{self.cycles.get()} 循環（每循環各任務 3 次）',
                  f'掃描時間：{self.scanned_at or "未掃描"}', self.result.note,
-                 '缺額依已辨識庫存估算；未完成掃描或辨識不完整時可能高估。',
+                 '已辨識庫存僅計入確認數量；無法確認缺額時顯示「待確認」。',
                  '素材\t需要\t已辨識庫存\t還缺']
         for name, required, stock, missing in self.result.rows(self.app.quests, int(self.cycles.get())):
-            lines.append(f'{name}\t{required}\t{stock}\t{max(0,required-stock)}')
+            shortage = '待確認' if missing is None else missing
+            lines.append(f'{name}\t{required}\t{stock}\t{shortage}')
         return '\n'.join(lines)
 
     def copy(self):

@@ -1,6 +1,5 @@
 import unittest
 import time
-import ctypes as C
 from app.capture import u
 from unittest.mock import patch
 from pathlib import Path
@@ -49,7 +48,7 @@ class SafetyTests(unittest.TestCase):
             w=GameWindow(42,'test','MabinogiMobile.exe',(0,0,1280,960))
             with patch('app.input_control.u.SendInput') as send:
                 with self.assertRaises(RuntimeError):
-                    s.inventory_once(w)
+                    s.key(w,0x49)
                 s.pause('F8')
                 with self.assertRaises(RuntimeError):
                     s.arm(w)
@@ -63,7 +62,6 @@ class SafetyTests(unittest.TestCase):
                 self.skipTest('F8 in use by another application')
             s.prepare()
             self.assertTrue(u.PostThreadMessageW(s.thread.native_id,0x0312,1,0))
-            import time
             end=time.monotonic()+.5
             while not s.user_paused and time.monotonic()<end:time.sleep(.01)
             self.assertTrue(s.user_paused);self.assertFalse(s.cancelled.is_set())
@@ -86,7 +84,7 @@ class SafetyTests(unittest.TestCase):
                 with s.lock,patch('app.input_control.u.GetForegroundWindow',return_value=foreground),patch('app.input_control.u.IsIconic',return_value=False),patch('app.input_control.client_rect',return_value=size),patch('app.input_control.process_name',return_value='MabinogiMobile.exe'),patch('app.input_control.u.SendInput') as send:
                     s.prepare();s.paused=False
                     with self.assertRaises(RuntimeError):
-                        s.inventory_once(w)
+                        s.key(w,0x49)
                     send.assert_not_called()
         finally:
             s.close()
