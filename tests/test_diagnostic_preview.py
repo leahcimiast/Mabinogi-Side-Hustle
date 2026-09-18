@@ -1,3 +1,4 @@
+"""CLI preview uses a planned count of three; it does not enter or scan quantities."""
 import unittest
 from unittest.mock import patch,Mock
 from PIL import Image
@@ -5,7 +6,7 @@ from app.inventory_recognition import _preview
 from app.recognition import Detection
 from app.whitelist import validate
 
-class ManualQuantityPipelineTests(unittest.TestCase):
+class DiagnosticPreviewTests(unittest.TestCase):
     def scan(self,raw,entries):
         item=Detection('?',None,(707,257,803,297),'','unconfirmed',raw)
         session=Mock();session.recognize_many.side_effect=[[[],[],[],[],[]],[[],[],[],[],[]]]

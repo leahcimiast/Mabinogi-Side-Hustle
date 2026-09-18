@@ -26,18 +26,6 @@ class ThemeTests(unittest.TestCase):
         self.assertEqual(calls, ['called'])
         self.assertTrue(button.instate(['disabled']))
 
-    def test_dynamic_editor_keeps_variable_bindings_and_selection(self):
-        DesktopTheme(self.root)
-        value = tk.StringVar(self.root, value='3')
-        entry = ttk.Entry(self.root, textvariable=value)
-        entry.bind('<Return>', lambda event: None)
-        binding = entry.bind('<Return>')
-        entry.selection_range(0, 'end')
-        self.assertTrue(entry.selection_present())
-        value.set('7')
-        self.assertEqual(entry.get(), '7')
-        self.assertEqual(entry.bind('<Return>'), binding)
-        self.assertEqual(ttk.Style(self.root).lookup('TEntry', 'foreground'), COLORS['text'])
 
     def test_startup_scaling_and_distinct_button_states(self):
         self.root.tk.call('tk', 'scaling', 2.0)

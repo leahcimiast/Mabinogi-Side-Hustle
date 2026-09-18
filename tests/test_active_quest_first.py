@@ -61,3 +61,35 @@ class ActiveFirstTests(unittest.TestCase):
         self.assertEqual(self.j.batch.completions[0].quest,self.wool.quest)
         self.assertIsNone(self.j.data['active'])
         self.assertEqual(Counter(q.quest for q in self.j.batch.completions[1:])[self.wool.quest],2)
+
+    def test_three_character_report_finishes_each_whitelist_quest_and_resumes(self):
+        from PIL import Image
+        from app.flow_vision import MultiScreen
+        image=Image.new('RGB',(1280,960))
+        def word(text,x,y,w,h):return dict(text=text,x=x,y=y,w=w,h=h)
+        for entry in ENTRIES:
+            with self.subTest(quest=entry.quest):
+                journal=Journal(Path(self.temp.name)/(entry.material+'.json'),self.base)
+                r=Runner(Mock(),Mock(),Mock(),journal,ENTRIES,Path('scripts/ocr.ps1'))
+                r.click=Mock();r.key=Mock();r.rest=Mock();r.wait_use_button=Mock()
+                active=MultiScreen(image,[[word('取得'+entry.material,1135,235,115,20),
+                    word('告回報',1208,282,55,14)]])
+                submit=Mock();submit.submission.return_value=True
+                submit.autofill_enabled.return_value=True;submit.submitted_ready.return_value=True
+                complete=Mock();complete.completion.return_value=True
+                world=Mock();world.world.return_value=True;world.report.return_value=None;world.tracker.return_value=None
+                r.screen=Mock(side_effect=[active,submit,complete,world])
+                def wait(predicate,*args):
+                    self.assertEqual(journal.data['completed'],0)
+                    self.assertTrue(predicate(world));return world
+                r.wait=Mock(side_effect=wait)
+                def inventory(q):
+                    self.assertEqual(journal.data['completed'],1)
+                    self.assertEqual(q.quest,ENTRIES[0].quest)
+                    raise RuntimeError('cycle resumed')
+                r.find_scroll=Mock(side_effect=inventory)
+                with self.assertRaisesRegex(RuntimeError,'cycle resumed'):r.quests()
+                self.assertEqual(journal.batch.completions[0].quest,entry.quest)
+                self.assertEqual(Counter(q.quest for q in journal.batch.completions[1:])[entry.quest],2)
+                self.assertIsNone(journal.data['active'])
+                r.wait_use_button.assert_not_called()

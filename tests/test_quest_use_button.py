@@ -33,7 +33,7 @@ class UseButtonWaitTests(unittest.TestCase):
         r=self.runner();button=Label('使用',(695,875,790,920));r.vision.quest_use_button.side_effect=[None,button]
         with patch('app.automation.capture.capture',return_value=Mock()):self.assertIs(r.wait_use_button(),button)
         self.assertEqual(r.check.call_count,4);self.assertEqual(r.rest.call_count,1)
-    def test_cancel_after_ocr_never_returns_click_target(self):
+    def test_cancel_after_button_check_never_returns_click_target(self):
         r=self.runner();r.vision.quest_use_button.return_value=Label('使用',(695,875,790,920))
         r.check.side_effect=[None,RuntimeError('F8')]
         with patch('app.automation.capture.capture',return_value=Mock()):

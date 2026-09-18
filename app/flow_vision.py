@@ -16,7 +16,10 @@ def tracker_identity(text):
 
 def is_report_text(text):
     text=compact(text)
-    return '回報任務' in text or ('佈告欄' in text and '回報' in text)
+    # User-approved three-character report cue: retain 回報 and at least
+    # one board character. This predicate is used only in the tracker region;
+    # initial adoption still checks a unique nearby whitelist title.
+    return '回報任務' in text or ('回報' in text and any(char in text for char in '佈告欄'))
 
 @dataclass
 class Label:
@@ -168,7 +171,7 @@ class MultiScreen(Screen):
         return any(selected_tab(self.image,screen.words,label) for screen in self.variants)
 
 class Vision:
-    def __init__(self,session):self.session=session
+    def __init__(self,session,log=lambda message:None):self.session=session;self.log=log
     def observe(self,image):
         if image.size!=(1280,960):raise RuntimeError('Unsupported game area')
         gray=ImageOps.autocontrast(image.convert('L'))
@@ -187,7 +190,53 @@ class Vision:
         if retry:
             recovered=self._observe_regions(image,retry)
             result=MultiScreen(image,[s.words for s in result.variants+recovered.variants])
+        if result.report() is None:
+            result=self.retry_report_line(image,result)
         return result
+
+    def retry_report_line(self,image,result):
+        """Retry an incomplete report row under a title; never infer readiness."""
+        rows=[row for screen in result.variants for row in labels(screen.words,(1000,180,1275,520))]
+        titles=[row for row in rows if row.box[3]-row.box[1]>=17
+                and compact(row.text).lstrip('·•◆◇').startswith(('取得','製作','尋找'))]
+        candidates=[]
+        for row in rows:
+            if '回報' not in row.text or not any(
+                8<=row.box[1]-title.box[3]<=65 and abs(row.box[2]-title.box[2])<=100
+                for title in titles):continue
+            if not any(abs(row.point[1]-other.point[1])<20 for other in candidates):
+                candidates.append(row)
+        if not candidates or len(candidates)>2:return result
+        sets=[screen.words for screen in result.variants]
+        for row in candidates:
+            # The right-aligned instruction is small; exclude the count above it.
+            box=(1105,max(180,int(row.box[1])-6),1275,min(520,int(row.box[3])+10))
+            raw=image.crop(box).convert('RGB');gray=ImageOps.autocontrast(raw.convert('L'))
+            variants=[raw,gray,ImageOps.invert(gray)]
+            peak=max(high for low,high in raw.getextrema())
+            mask_source=raw.point(lambda value:round(value*255/peak)) if 0<peak<230 else raw
+            for threshold in (130,170,205):
+                mask=Image.new('L',raw.size)
+                mask.putdata([0 if (min(p)>threshold and max(p)-min(p)<65)
+                              or (p[0]>threshold and p[1]>threshold*.65 and p[2]<p[1]*.85)
+                              else 255 for p in mask_source.get_flattened_data()])
+                variants.append(mask)
+            spec=[(variant,3) for variant in variants]
+            spec += [(variant,2 if index<3 else 4) for index,variant in enumerate(variants)]
+            images=[ImageOps.expand(v.resize((raw.width*scale,raw.height*scale)),20,'white')
+                    for v,scale in spec]
+            readings=[]
+            for words,(_,scale) in zip(self.session.recognize_many(images,timeout=5),spec):
+                mapped=[dict(text=w['text'],x=box[0]+(w['x']-20)/scale,
+                             y=box[1]+(w['y']-20)/scale,w=w['w']/scale,h=w['h']/scale)
+                        for w in words if w['x']>=20 and w['y']>=20
+                        and w['x']+w['w']<=20+raw.width*scale
+                        and w['y']+w['h']<=20+raw.height*scale]
+                readings.extend(label.text for label in labels(mapped))
+                sets.append(mapped)
+            self.log('回報列局部辨識：'+' | '.join(dict.fromkeys(readings)))
+        # Same exact report predicate and multiple-report rejection as normal OCR.
+        return MultiScreen(image,sets)
 
     def observe_dialogue(self,image):
         return self._observe_regions(image,[(350,20,850,175)],variant_count=2)

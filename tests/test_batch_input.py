@@ -47,7 +47,7 @@ class BatchInputTests(unittest.TestCase):
         with patch('app.input_control.u.SendInput') as send:
             with self.assertRaises(RuntimeError):self.s.drag(self.w,(1185,135),(775,135))
             send.assert_not_called()
-    def test_drag_f8_releases_and_does_not_continue(self):
+    def test_drag_cancel_releases_and_does_not_continue(self):
         self.s.check=Mock(return_value=(0,0,1280,960));self.s._send=Mock()
         self.s.cancelled=Mock();self.s.cancelled.wait.return_value=True
         with self.assertRaisesRegex(RuntimeError,'拖曳已暫停'):self.s.drag(self.w,(1185,135),(775,135))

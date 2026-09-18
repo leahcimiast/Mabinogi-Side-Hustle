@@ -17,7 +17,7 @@ class MissingQuestScroll(RuntimeError):pass
 
 class Runner:
     def __init__(self,window,safety,session,journal,entries,script,log=lambda message:None,on_progress=lambda event:None,name_memory=None,on_name_review=None):
-        self.window=window;self.safety=safety;self.session=session;self.vision=Vision(session)
+        self.window=window;self.safety=safety;self.session=session;self.vision=Vision(session,log=log)
         self.journal=journal;self.batch=journal.batch;self.entries=entries;self.script=script;self.log=log
         self.name_memory=name_memory;self.on_name_review=on_name_review;self.storage_mode=False;self.submission_mode=False;self.quest_mode=False;self.tracker_world=True;self.inventory_ready=False
         self.on_progress=on_progress;self.current_item="";self.current_quantity=None
