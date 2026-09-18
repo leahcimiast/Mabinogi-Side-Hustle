@@ -215,3 +215,159 @@ User reported the retrieval test passed with 100% accuracy (user-run evidence). 
 - Visually reviewed the actual themed task table with an active inline editor using temporary data and mock Safety; editing one row and debug expand/collapse also passed. Screenshot remains private under ignored `.local/`.
 - Reviewed staged GUI/theme diff: only theme import/initialization and debug resize hooks modify the functional GUI; automation/input/batch modules are unchanged by the theme merge. No blocking compatibility finding. `git diff --check` passed.
 - No new portable package or release. In-game full-batch and dynamic multi-monitor DPI limitations remain unverified.
+
+
+## 2026-09-17 Quest Use-button detection
+
+- Branch `codex/quest-use-button-detection`. Replaced the broad lower-screen Use lookup with a dedicated 130x90 crop, five small OCR variants, a green enabled-button check, and bounded waiting. Only the two-character button text area contributes evidence; the action clicks the verified button center. No tooltip-name reread. Activation journaling, post-activation identity and completion guards remain unchanged.
+- Supplied screenshot is 1273x949 and was normalized to 1280x960 for offline testing. Old full-screen OCR did detect Use offline, so the exact live failure was not reproduced. Dedicated detection found Use at `(695,875,790,920)` in 0.328 seconds excluding OCR startup. No live input was sent.
+- Six new Use-button tests passed (crop recovery, disabled color, unrelated/out-of-region text, observation-only retry, F8 after OCR, timeout). Existing single-quest integration test exercises the new center click and completion flow.
+- Non-GUI regression: 151 tests run, 150 passed, one F8 registration test skipped. Eight isolated GUI tests passed; the existing inline-edit GUI test hangs in Tk `update` even in isolation. Full-suite retry was bounded with a 45-second traceback timeout; isolated GUI attempt timed out after 15 seconds. Full GUI regression remains incomplete; no GUI files changed in this fix.
+- Code review checked crop coordinates, enabled-state evidence, exact button text, bounded OCR/waiting, focus/F8 checks before and after OCR, and journal intent before activation. No blocking issue found in this change; `git diff --check` passed. In-game validation remains outstanding. No commit, merge, package or release.
+
+
+## 2026-09-17 Tracker activation recognition and existing-task recovery
+
+- Reproduced the supplied 1270x948 screenshot after offline normalization to 1280x960: all useful OCR variants omitted 取得 from the title, retained 鐵礦石, and read 回報任務佈告欄. The prior tracker predicate therefore returned None despite successful activation.
+- A bare exact item name now requires title-sized text and a nearby report row in the same tracker area. Smaller carried-count text, missing/distant report rows, different grades/plus signs, duplicate title rows, and conflicting OCR identities remain rejected. Full/prefix-missing variants of the same title no longer conflict. Completion name evidence uses exact canonical item identity rather than a bare-name substring.
+- Fresh-session recovery may adopt only the current planned quest when its identity and nearby ready-report row are both visible. It records the observed active state and proceeds without using another scroll. Different/unknown existing tasks and unresolved journal intents still stop. Saved full titles may resume from a prefix-missing read; explicit action changes remain rejected.
+- Updated screenshot result: tracker 鐵礦石, report 回報任務佈告欄, world=True. No game input sent.
+- Non-GUI regression: 164 tests run, 163 passed, one F8 registration test skipped. Added 13 tracker/recovery/completion-name cases, including no duplicate activation and mismatched report rejection. GUI code was unchanged; the previously documented Tk regression hang was not rerun.
+- Code review checked tracker geometry, exact identity/grade boundaries, cross-variant disagreements, observed-state adoption, intent recording, and completion guards. `git diff --check` passed. Live submission remains unverified; no commit, merge, package, or release.
+
+
+## 2026-09-17 Active whitelist quest first
+
+- Submission checks the world/tracker before inventory. Any unique ready whitelist task can be adopted regardless of its current plan position. One existing scheduled completion is moved to the front of the remaining sequence without altering the completed prefix or other quest totals; if its remaining count was zero, only the already-active completion is added.
+- Adoption persists identity and the reordered plan, but does not increment completed. Completion is credited only after the existing submission, completion-banner, and closed/report-disappeared checks. Subsequent inventory activation follows the original remaining order. Pending journal intent, unknown/ambiguous/non-whitelist reports and recognized incomplete tasks block new activation.
+- GUI reads the journal's current plan so per-quest completed/remaining rows stay correct after reordering. Confirmation wording now allows an already-active whitelist quest. A zero-total plan can still inspect and submit an existing task.
+- Non-GUI suite: 169 run, 168 passed, one F8 registration test skipped. New tests verify persisted reordering, prefix preservation, zero remaining, failed-save rollback, and wool-first completion followed by the normal iron-scroll cycle without an initial inventory open. Two targeted GUI tests passed for per-row completion accounting and zero-plan startup. Full GUI suite was not rerun due to the previously documented Tk update hang.
+- Code review checked identity uniqueness, material mapping, save rollback, no premature/double credit, plan/GUI synchronization, and no inventory activation before current completion. No blocking finding; diff checks passed. No live game run, commit, main merge, or package.
+
+
+## 2026-09-17 Partially read active-task prefix
+
+- Reproduced the supplied desktop screenshot: OCR returned 得鐵礦石 (one variant with a trailing pin-like tilde) and a nearby 回報任務佈告欄. The previous normalizer handled full or fully missing action prefixes, but not a partially missing prefix.
+- Normalization now handles partial 取得/製作 prefixes and trailing pin-like OCR marks. Partial titles still require the full exact item identity, title-sized text, and their own nearby reporting row. Grade and literal plus distinctions and cross-variant conflict checks remain enforced. Active-task detection logs raw tracker text and the number of matching whitelist entries on failure.
+- Offline replay cropped the supplied desktop image to the game area and normalized it to 1280x960; this does not change live capture geometry. The updated real OCR path returned 得鐵礦石 and exactly one matching whitelist entry: 採礦卷軸: 鐵礦石. No live game input was sent.
+- Non-GUI regression: 172 run, 171 passed, one occupied F8 registration test skipped. Added partial-prefix/pin, missing-report, grade/plus, and conflicting-variant cases. GUI tests were not rerun; the previously documented full GUI regression limitation remains.
+- Code review checked normalization boundaries, report anchoring, whitelist uniqueness, and unchanged completion accounting. No blocking finding; diff whitespace check passed. Live submission, executable packaging, commit and merge remain unperformed.
+
+
+## 2026-09-17 Submission controls without material OCR
+
+- Removed material-name OCR from submission and submit-readiness checks as requested. On the identified submission screen, enable auto-insert unless already visibly on, then wait for the green submit button. No material/count scanning was added. Completion identity, journal intent, closed/report-disappeared checks, and foreground/F8 protection remain.
+- Submission/dialogue/completion observation now reads four small regions with five OCR variants, mapped back to game coordinates and batched at no more than 12 images. The full-screen path resumes before verifying the closed completion screen. Native-scale recognition and a wider header crop preserved the older t43 submission reference.
+- Supplied screenshot replay: submission=True, auto-insert=False, ready=False without reading material names. Same-session benchmark excluding OCR startup: full-screen 1.298 seconds versus cropped 0.608 seconds. This is an offline observation comparison, not an end-to-end live timing promise. Existing t43/t45 submission references and t47 corn completion were checked; no live game input was sent.
+- All 176 non-GUI tests passed, including material-OCR rejection in the full submission cycle, auto-insert click, readiness without material text, disabled-button rejection, bounded cropped OCR, coordinate mapping and safety checks. Existing GUI regression limitation remains; GUI was not changed in this task.
+- Code review checked no premature completion credit, no inventory activation during an existing quest, no toggle-off when visibly enabled, reader scope and batch bounds, and read-after-click before submit. Diff whitespace check passed. No commit, merge, package or release.
+
+
+## 2026-09-17 Split tracker action OCR
+
+- Reproduced the supplied screenshot and matching local failure log. Four variants retained the full iron-ore identity; the threshold variant split the title into an isolated 取得 and 礦石~. The empty canonical identity from 取得 incorrectly vetoed the four complete reads.
+- Ignore action-only fragments when checking conflicting identities. They cannot positively identify a quest; an independently accepted full item title is still required. Conflicting actual item names, grade/plus distinctions and position checks remain. Leading bullet normalization now also applies to conflict checks; conflict messages include the raw conflicting text.
+- Real OCR replay of the supplied game-area crop now produces exactly one whitelist match, 採礦卷軸: 鐵礦石. No screenshot is tracked and no live game input was sent.
+- Non-GUI regression: 178 tests run, 177 passed, one occupied F8 registration test skipped. New tests cover full-title plus split-action variants, rejection of split-only evidence, and conflicting bulleted grade text. Code review checked empty-identity rejection, preserved actual conflicts and unchanged completion accounting. Diff whitespace check passed. No commit, merge or package.
+
+
+## 2026-09-18 Compact dashboard and button-based completion
+
+- Replaced submission checkbox with the exact requested static reminder and removed its start gate. Existing pending-result reconciliation remains. Compact button padding/borders, cards, table headings and tabs reclaim vertical space; debug actions share one row, and the text area is no longer forced to six lines by the theme.
+- Per the latest request, post-submit completion now uses the bottom green confirmation control geometry: width 450-550, height 45-85, centered near x=640/y=885-925, over 80 percent green coverage. It no longer depends on completion-title OCR or the moved title on special-reward results. Small inventory Use buttons, middle-screen submit controls and missing buttons fail. The runner checks this directly only during pending completion before slower OCR; close-screen/report-disappearance verification still precedes credit and the next scroll.
+- Supplied special-reward screenshot passes without OCR. The older reference captured before the green confirmation appears does not yet count as complete; the runner waits for the button. No live game input sent.
+- GUI preview used temporary data/mock Safety with recovery visible: button height 29 pixels, log text area 579x222 pixels, exact static reminder. Visually reviewed the enlarged readable log and compact layout. Four targeted GUI/theme tests passed; existing non-failing Tk ThemeChanged teardown warning remains. Full GUI regression not rerun due to earlier documented hang.
+- Code review checked button geometry, post-submit-only fast path, focus/F8 checks, journal accounting and unchanged recovery guard. No commit, merge or executable package. Running session has pending completion; it was not restarted or its progress discarded.
+
+
+## 2026-09-18 Quest tab fresh-position selection
+
+- Supplied post-failure screenshot correctly yields the rightmost 任務 label at game coordinates (1174,133)-(1204,147), center (1189,140). The screenshot cannot establish the position used by the earlier click. Existing navigation accepted substring matches and reused the observation preceding selection without corrective clicks.
+- Quest-tab lookup now requires an exact label. Re-read the small inventory controls immediately before each click, log its coordinates, and verify selected state immediately afterward. Up to three fresh-position clicks are allowed; missing identity, focus loss/F8, or persistent wrong selection stops. Inventory scroll search still requires the quest filter to be selected.
+- Regression covers moved tab coordinates, wrong-category correction, exact matching and bounded three-click failure. All non-GUI checks passed except the occupied global F8 registration skip; GUI unchanged. Code review checked fresh-coordinate use, bounded inputs, safety calls and selected-tab guard. Diff check passed; no live input, commit, merge or package.
+
+
+## 2026-09-18 Fixed quest filter navigation (user override)
+
+- Replaced OCR-based quest-tab navigation with two full header swipes from (1185,135) to (775,135), 350 ms settle after each, and one fixed click at (1189,140). The supported layout has only a short overflow; repeated full swipes saturate the right endpoint. Live end-position reliability remains unverified.
+- Removed quest-tab OCR, selected-tab OCR during scroll search, and E-key fallback. Bottom 道具 identification now crops only the bottom category, not the header. Scroll-name matching, activation and completion handling remain; every input and capture still checks focus/F8.
+- Non-GUI regression passed; navigation tests verify two swipes, fixed click, no tab OCR/E, and no quest click after interrupted drag. Review checked scope, game-relative coordinates, bounded swipes, retained item matching and failure propagation. No live game input, commit, merge or package.
+
+
+## 2026-09-18 Single filter swipe
+
+- Per user request, reduced quest-filter navigation to one complete swipe followed by the existing 350 ms settle and fixed-position click. No tab OCR or E-key fallback. Reviewed the diff: no change to material storage scrolling or quest recognition. The two navigation regression tests passed; live game validation remains outstanding.
+
+
+## 2026-09-18 Visible zero during inline count editing
+
+- Inline quest-count entries now use a dedicated flat, zero-padding style rather than rounded form-entry chrome. This keeps the editable text within the compact row instead of clipping it until the editor closes.
+- GUI validation with temporary data and mock Safety: typed value 0 is visible before Enter, editor requests 21 pixels within the 28-pixel row, and cancelling preserves the original 57-count plan. Visually inspected the actual app window screenshot. Entry bindings, Enter/focus-out save and Escape cancel remain unchanged.
+- Reviewed the two-line functional/style application boundary; other entries retain their existing style. No live game input or running-batch change. Diff whitespace check passed.
+
+
+## 2026-09-18 Per-row steppers, spider tracker and scoped cycle OCR
+
+- Each quest row now offers minus/plus click cells, immediately persisting its remaining count with zero floor and existing active/pending/worker guards. Real UI click and screenshot verified; two targeted GUI tests verify persistence, row isolation, zero floor and pending lock.
+- Reproduced spider screenshot: title is 尋找蜘蛛網. Added 尋找 to supported action prefixes and preserved the whitelist mapping from 蜘蛛絲 scroll to 蜘蛛網 material. Exact item, grade/plus and action-conflict rules remain.
+- Quest-cycle world/tracker captures use the top-right quadrant rather than full-screen OCR; post-activation capture reads only that quadrant, while startup/closure also reads the small bottom-left world indicator. Native and 2x color variants retained; the threshold variant incorrectly truncated spider-web text and was excluded from this targeted reader. Other workflows retain their existing OCR paths.
+- Real screenshot replay passed for spider web, arrow flower and iron ore. Tracker-only observation took 0.451/0.475/0.418 seconds respectively, excluding OCR startup; earlier full-screen spider observation took 2.505 seconds. Timings are offline measurements, not a live-cycle guarantee.
+- Use-button recognition now reads fixed green geometry after a known scroll is selected, without OCR; side patches reject the wider completion button. Existing fixed quest-tab, auto-insert, submit and completion actions retained. Identity OCR is not replaced by an assumed quest.
+- Non-GUI regression passed with one occupied F8 skip; targeted GUI/recognition tests and actual stepper click passed. Review checked coordinate mapping, crop bounds, no premature count credit, pause/focus checks, exact spider mapping and isolated GUI controls. No restart, journal modification, commit, merge or package; current pending activation remains for player reconciliation.
+
+
+## 2026-09-18 Truncated tracker reading and pin punctuation
+
+- Actual run log showed 尋找蜘 vetoing the complete spider-web identity. Offline screenshot replay additionally reproduced a trailing comma in 尋找蜘蛛網,. Both are now handled without accepting an incomplete identity on its own.
+- A conflicting prefix fragment is ignored only if another variant independently matches the full exact item, the fragment shares the action and title location, and its right edge is at least eight pixels shorter. Literal-plus targets are excluded from this exception. Non-prefix names, grade differences, full-width conflicts and action changes still stop. Trailing comma pin noise is removed during canonicalization.
+- Supplied screenshot passes tracker and report recognition. All 185 non-GUI tests passed, including fragment-only rejection, different-material/action rejection, geometry restriction and plus preservation. Code review and diff check passed. No game input, running-batch modification, restart, commit or package.
+
+
+## 2026-09-18 Report-indicator-only after known activation
+
+- Store the selected scroll identity in the activation intent. Once its use has been dispatched, wait only for the bulletin-board report indicator in the upper-right crop. Click that report row directly; no tracked-title matching or cross-variant title conflict is evaluated for a recorded active quest.
+- Initial adoption of an unrecorded existing task still matches its whitelist identity for correct accounting. Multiple distinct report rows stop. Completion still requires the large green bottom result control, closure/world evidence and absence of the report row before incrementing the recorded quest.
+- Full-cycle test now raises if tracker-name matching is attempted after scroll use; known-active resume likewise rejects any title OCR call in its fixture. Existing unknown-task, interrupted activation, and completion accounting checks remain. Non-GUI suite passed; targeted report ambiguity test passed. Review checked single-quest ledger continuity, intent-before-input and no premature completion credit. No restart or player progress mutation; live report-row click remains unverified.
+
+
+## 2026-09-18 Skip missing planned scrolls
+
+- The existing bounded scroll search now raises a distinct missing-scroll outcome. Only this outcome removes every remaining occurrence of the current quest from the submission plan, with a persisted count/reason and save rollback. Completed prefix and other quest quantities are unchanged. The runner closes inventory and verifies the world before continuing; no skipped count is credited as completed.
+- Active/pending journal entries cannot be skipped. Ambiguous OCR, focus/F8 failures and unknown activation/submission outcomes retain their prior stop behavior. GUI reads the revised journal plan and displays zero remaining for the skipped task.
+- All 191 non-GUI tests passed. Added reload/prefix preservation, save rollback, active/pending rejection, next-kind continuation and non-missing failure tests. Code review checked catch scope, input ordering, persistence and no duplicate activation. Diff check passed. No game input, restart, live-batch mutation, commit or package.
+
+
+## 2026-09-18 Faster missing-scroll search
+
+- Previous search compared exact bytes from the icon-and-text panel and could repeatedly OCR twenty observations when animated pixels changed. Now compare blurred grayscale name strips with noise tolerance before OCR; icon/count regions are excluded.
+- One stationary observation triggers one alternate-position wheel retry; a second stationary observation ends search with the existing missing-scroll skip outcome. A stationary list gets one normal/enlarged OCR pair, not twenty pairs. Search cap reduced to six observations; lists beyond that bounded range may be skipped, per the requested speed tradeoff.
+- Non-GUI suite: 195 run, 194 passed, one occupied F8 test skipped. Added icon/noise exclusion, real name-area motion, stationary early exit and six-observation bound tests. Review checked safety checks before/after captures and OCR, no repeated activation, unchanged missing-quest accounting and separate storage scrolling. Diff check passed. No live-game timing claim, restart, commit or package.
+
+
+## 2026-09-18 Reuse inventory and start from materials
+
+- Reuse the open quest inventory between missing-scroll skips; no I press, category navigation, or world-screen wait between them. Search still resets list position for the next quest. Successful scroll use clears the open-inventory state so the next completion cycle can open inventory normally.
+- At submission startup, if the world screen is absent, inspect only the existing bottom inventory category. A recognized inventory (including material filter) navigates directly to the quest category without toggling I. Unknown screens still stop; pending results still require reconciliation. Restart/resume re-detects the screen instead of trusting a stale inventory flag.
+- Non-GUI suite: 197 run, 196 passed, one occupied F8 test skipped. Tests cover no inventory toggle or redundant world read after skip, material-page startup without I, and no action from unknown screens. Review checked inventory-state reset after use, unchanged journal accounting and foreground/F8 behavior. Diff check passed. No runtime restart, live-batch mutation, commit or package.
+
+
+## 2026-09-18 Board readiness and post-submit delay
+
+- Log shows milk activation timed out, followed by manual activation reconciliation as not happened and startup world-detection failures. Supplied screenshot confirms an existing ready milk task. Offline replay reproduced report OCR as 回報壬務佈告欄; the exact chat prompt was readable in one native crop but may be absent in live observations.
+- Accept a ready bulletin report without requiring the separate chat-text world indicator at startup. Existing-task adoption still matches the whitelist. Report recognition accepts exact 回報 and 佈告欄 around a noisy 任務 word; no board/report word alone suffices. Retry missing report/chat evidence in small dedicated regions only.
+- After submit intent, recognize the green completion control first; otherwise OCR only the dialogue crop with two variants, rather than all submission controls with five variants. Dialogue-loop pauses reduced to 100 ms; input settling and foreground/F8 checks remain. No blind dialogue advance or premature completion credit.
+- Screenshot replay passes milk identity, report and world recognition. Added tests for chat-absent ready-task adoption, report-word noise, targeted retry and dialogue-only pending-completion reader. Non-GUI regression passed with one occupied F8 skip. Review checked startup/adoption boundaries, capture safety and completion accounting. Diff check passed. No live speed claim, restart, batch mutation, commit or package.
+
+
+## 2026-09-18 Version 1.0.0 release review
+
+- Release branch preserves the current working-tree feature set; other linked worktrees are untouched. No gameplay behavior changes were made during release preparation.
+- Full unittest suite: 289 tests passed in 22.556 seconds, with no failures or skips, including GUI, pause/resume, focus gates, journal recovery, active-quest adoption, missing-scroll accounting, OCR distinctions, and stock scanning.
+- Reviewed automation/journal transitions, input cancellation and short-drag release, scoped OCR and literal-plus/material distinctions, Tk worker event handoff, stock overlap accounting, and packaging inputs. No new release-blocking regression identified in this review.
+- Known boundaries remain: OCR can miss hidden/untracked quests; prepare the tracked quest state before starting. Quantity entry is not read back and game-side clamping is not detected. Short gestures finish releasing the mouse before resumable pause. Full live 19-material/57-quest execution, complete stock scans across layouts, and mixed-monitor DPI remain unverified.
+- Version 1.0.0 is shared by app title, build validation, and Windows executable metadata. Packaging includes only the frozen app, required resources, and release documentation; private captures, recordings, workbooks, local logs, and player settings are excluded.
+
+- Release-candidate ZIP passed CRC and SHA-256 checks; all required OCR scripts, default whitelist, icon, and documentation were present. No private reference workbooks, recordings, logs, settings, or batch history were included.
+- Extracted executable passed offline diagnostics: Tk initialized, 19 whitelist entries, 19 material requests / 57 planned completions, 352 OCR words and 19 detections from the existing private quest fixture, zero game inputs.
+- Packaged main GUI launched with temporary LOCALAPPDATA, exposed the v1.0.0 window title, created its isolated journal, and closed cleanly. Real player data was not modified. Windows FileVersion and ProductVersion both read 1.0.0. This is a startup smoke test, not a live gameplay test.
+- Corrected a build-only relative version-resource path discovered by the first packaging attempt; the successful build uses an absolute path. Gameplay code was not changed during release preparation.

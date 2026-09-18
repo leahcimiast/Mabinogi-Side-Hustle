@@ -8,6 +8,16 @@ from .inventory_recognition import line_text
 
 def compact(text):return "".join(text.split()).replace("：",":")
 
+def tracker_identity(text):
+    text=compact(text).lstrip('·•◆◇').rstrip('~～↗→,，')
+    for prefix in ('取得','製作','尋找','得','取','製','作'):
+        if text.startswith(prefix):return text[len(prefix):]
+    return text
+
+def is_report_text(text):
+    text=compact(text)
+    return '回報任務' in text or ('佈告欄' in text and '回報' in text)
+
 @dataclass
 class Label:
     text:str
@@ -65,21 +75,45 @@ class Screen:
         found=[title for title in self.tooltip_titles() if title.text==compact(name)]
         return found[0] if len(found)==1 else None
     def submission(self):return self.has('傳達',(0,0,200,90)) and self.has('自動放入',(30,585,250,660))
-    def submitted_ready(self,material):
-        return self.submission() and self.has(material,(240,230,440,420)) and self.green((160,545,500,570))
-    def completion(self,identity):
-        # Stylized completion letters are missed by Windows OCR. Compare only a
-        # fixed game-UI banner gradient signature, then require the actual quest title.
-        im=self.image.crop((420,435,860,489)).convert('L').resize((65,16))
-        pix=list(im.get_flattened_data())
-        bits=''.join('1' if pix[y*65+x]>pix[y*65+x+1] else '0' for y in range(16) for x in range(64))
-        reference=int('0008001174fffbff000649232679e7ff000449a32679e7ff0001c1a26679cfff000585a26679cffb000d9b226679cffb000d9b06567bcffe0008d50e3e73cffe00099b061cf3cffe00093326acd3cff400093526bcd3dff5000197644cd39ffd0001aa046cc79ffd00192a8dace79ffd00204400d0ffeedd000000049cffed59',16)
-        distance=(int(bits,2)^reference).bit_count()/1024
-        return distance<.12 and self.has(identity,(400,480,900,570))
+    def autofill_enabled(self):
+        return self.green((84,620,94,632))
+    def submitted_ready(self):
+        return self.submission() and self.green((160,545,500,570))
+    def quest_identity_present(self,identity,region):
+        # Exact item identity also applies to completion when the tracker lost its verb.
+        return any(tracker_identity(title.text)==tracker_identity(identity)
+                   for screen in getattr(self,'variants',[self]) for title in labels(screen.words,region))
+
+    def completion(self,identity=None):
+        # Only the post-submit runner uses this: a wide bottom confirmation button.
+        image=self.image.convert('RGB');points=[]
+        for y in range(840,950):
+            for x in range(300,980):
+                r,g,b=image.getpixel((x,y))
+                if g>135 and g>r*1.25 and g>b*.95:points.append((x,y))
+        if not points:return False
+        left=min(x for x,y in points);right=max(x for x,y in points)
+        top=min(y for x,y in points);bottom=max(y for x,y in points)
+        width=right-left+1;height=bottom-top+1
+        return (450<=width<=550 and 45<=height<=85
+                and abs((left+right)/2-640)<=25 and 885<=(top+bottom)/2<=925
+                and len(points)/(width*height)>.8)
     def tracker(self,material_or_tail):
-        names=[x for x in labels(self.words,(900,180,1275,500)) if compact(material_or_tail) in x.text and ('取得' in x.text or '製作' in x.text)]
+        target=compact(material_or_tail);names=[]
+        rows=labels(self.words,(900,180,1275,520))
+        for title in rows:
+            if tracker_identity(title.text)!=target:continue
+            full=compact(title.text).lstrip('·•◆◇').startswith(('取得','製作','尋找'))
+            # A missing action prefix is accepted only on a large title immediately
+            # above its own report row, never on the smaller inventory-count line.
+            anchored=title.box[3]-title.box[1]>=17 and any(
+                is_report_text(row.text) and 8<=row.box[1]-title.box[3]<=55
+                and abs(row.box[2]-title.box[2])<=80 for row in rows)
+            if full or anchored:names.append(title)
         return names[0] if len(names)==1 else None
-    def report(self):return self.find('回報任務',(900,180,1275,520))
+    def report(self):
+        found=[row for row in labels(self.words,(900,180,1275,520)) if is_report_text(row.text)]
+        return found[0] if len(found)==1 else None
     def world(self):return self.has('對周圍說話',(0,820,500,960))
     def dialogue(self):
         # Only a visible speech bubble with readable text permits a dialogue advance.
@@ -103,11 +137,32 @@ class MultiScreen(Screen):
     def tracker(self,material_or_tail):
         found=[screen.tracker(material_or_tail) for screen in self.variants]
         found=[item for item in found if item is not None]
-        if len({item.text for item in found})>1:raise RuntimeError('多方法 OCR 的任務身份不一致；停止交付。')
+        if found:
+            for screen in self.variants:
+                for title in labels(screen.words,(900,180,1275,520)):
+                    text=compact(title.text).lstrip('·•◆◇')
+                    identity=tracker_identity(text)
+                    # An isolated action is a split OCR fragment, not another item.
+                    if identity and text.startswith(('取得','製作','尋找','得','取','製','作')) and any(abs(title.point[1]-item.point[1])<=18 and abs(title.box[2]-item.box[2])<=100 for item in found):
+                        target=compact(material_or_tail)
+                        # A visibly shorter prefix fragment cannot veto a complete
+                        # exact reading on the same title. Never drop a literal +.
+                        fragment=('+' not in target and len(identity)<len(target)
+                                  and target.startswith(identity) and any(
+                                      text[:2]==compact(item.text).lstrip('·•◆◇')[:2]
+                                      and abs(title.box[0]-item.box[0])<=30
+                                      and title.box[2]<=item.box[2]-8 for item in found))
+                        if identity!=target and not fragment:
+                            raise RuntimeError(f'多方法 OCR 的任務身份不一致：{title.text} / {material_or_tail}；停止交付。')
+            actions={item.text[:2] for item in found if item.text.startswith(('取得','製作','尋找'))}
+            if len(actions)>1:raise RuntimeError('多方法 OCR 的任務動作不一致；停止交付。')
+        if len({tracker_identity(item.text) for item in found})>1 or any(abs(item.point[1]-found[0].point[1])>18 for item in found):raise RuntimeError('多方法 OCR 的任務身份或位置不一致；停止交付。')
         return found[0] if found else None
     def report(self):
-        # Ambiguous reporting text is still evidence that a report entry exists.
-        return next((item for screen in self.variants for item in labels(screen.words,(900,180,1275,520)) if '回報任務' in item.text),None)
+        found=[item for screen in self.variants for item in labels(screen.words,(900,180,1275,520)) if is_report_text(item.text)]
+        if any(abs(item.point[1]-found[0].point[1])>20 for item in found):
+            raise RuntimeError('同時辨識到多個佈告欄回報位置；請只保留目前任務追蹤。')
+        return found[0] if found else None
     def selected_tab(self,label):
         from .inventory_recognition import selected_tab
         return any(selected_tab(self.image,screen.words,label) for screen in self.variants)
@@ -121,10 +176,49 @@ class Vision:
         results=self.session.recognize_many([im.resize((1280*scale,960*scale)) for im,scale in variants])
         mapped=[[dict(text=w['text'],x=w['x']/scale,y=w['y']/scale,w=w['w']/scale,h=w['h']/scale) for w in words] for (_,scale),words in zip(variants,results)]
         return MultiScreen(image,mapped)
-    def observe_inventory_controls(self,image):
+    def observe_tracker(self,image,include_world=False):
+        regions=[(640,0,1280,480)]
+        if include_world:regions.append((0,880,310,950))
+        result=self._observe_regions(image,regions,variant_count=2)
+        # Retry only unread small controls, never the entire game screen.
+        retry=[]
+        if result.report() is None:retry.append((1000,220,1275,380))
+        if include_world and not result.world():retry.append((0,820,500,960))
+        if retry:
+            recovered=self._observe_regions(image,retry)
+            result=MultiScreen(image,[s.words for s in result.variants+recovered.variants])
+        return result
+
+    def observe_dialogue(self,image):
+        return self._observe_regions(image,[(350,20,850,175)],variant_count=2)
+
+    def observe_submission_controls(self,image):
+        return self._observe_regions(image,[(0,0,320,140),(30,585,250,660),(350,20,850,175)])
+
+    def _observe_regions(self,image,regions,variant_count=5):
+        if image.size!=(1280,960):raise RuntimeError('Unsupported game area')
+        inputs=[];spec=[]
+        for box in regions:
+            raw=image.crop(box);gray=ImageOps.autocontrast(raw.convert('L'))
+            variants=[(raw,1),(raw,2),(gray,2),(ImageOps.invert(gray),2),
+                      (ImageOps.invert(gray.point(lambda p:255 if p>120 else 0)),2)]
+            for index,(variant,scale) in enumerate(variants[:variant_count]):
+                inputs.append(ImageOps.expand(variant.resize((raw.width*scale,raw.height*scale)),20,'white'))
+                spec.append((box,index,scale))
+        sets=[[] for _ in range(variant_count)];results=[]
+        for start in range(0,len(inputs),12):
+            results.extend(self.session.recognize_many(inputs[start:start+12],timeout=5))
+        for words,(box,index,scale) in zip(results,spec):
+            sets[index].extend(dict(text=w['text'],x=box[0]+(w['x']-20)/scale,y=box[1]+(w['y']-20)/scale,w=w['w']/scale,h=w['h']/scale)
+                for w in words if w['x']>=20 and w['y']>=20
+                and w['x']+w['w']<=20+(box[2]-box[0])*scale
+                and w['y']+w['h']<=20+(box[3]-box[1])*scale)
+        return MultiScreen(image,sets)
+
+    def observe_inventory_controls(self,image,category_only=False):
         """Read small controls only; native scale recovers white selected tabs."""
         if image.size!=(1280,960):raise RuntimeError('Unsupported game area')
-        regions=[(700,95,1260,175),(910,900,1000,945)]
+        regions=[(910,900,1000,945)] if category_only else [(700,95,1260,175),(910,900,1000,945)]
         inputs=[];spec=[]
         for box in regions:
             raw=image.crop(box);gray=ImageOps.autocontrast(raw.convert('L'))
@@ -140,6 +234,19 @@ class Vision:
                          and w['x']+w['w']<=20+(box[2]-box[0])*scale
                          and w['y']+w['h']<=20+(box[3]-box[1])*scale])
         return MultiScreen(image,sets)
+
+    def quest_use_button(self,image):
+        """Fixed-position enabled control after selecting a known scroll; no OCR."""
+        if image.size!=(1280,960):raise RuntimeError('Unsupported game area')
+        screen=Screen(image,[]);button=(695,875,790,920)
+        if (screen.green(button) and not screen.green((660,885,675,910))
+                and not screen.green((810,885,825,910))):return Label('使用',button)
+        return None
+
+    def transfer_confirmation_ready(self,image):
+        """Enabled fixed-position button in an already verified quantity dialog."""
+        if image.size!=(1280,960):raise RuntimeError('Unsupported game area')
+        return Screen(image,[]).green((900,885,1020,920))
 
     def transfer_prompt_ready(self,image):
         # This central button opens the quantity dialog; it is not the right-side

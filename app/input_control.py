@@ -2,6 +2,8 @@
 import ctypes as C
 from ctypes import wintypes as W
 import threading
+import queue
+import time
 from .capture import u, process_name, client_rect, BASELINE
 
 class KEYBDINPUT(C.Structure):
@@ -16,8 +18,16 @@ u.SendInput.argtypes = [W.UINT,C.POINTER(INPUT),C.c_int]
 u.SendInput.restype = W.UINT
 
 class Safety:
-    def __init__(self):
+    def __init__(self, hotkey="F8"):
         self.lock = threading.RLock()
+        self.condition = threading.Condition(self.lock)
+        self.user_paused = False
+        self.running = False
+        self.paused_seconds = 0.0
+        self.pause_started = None
+        self.on_hotkey = lambda event: None
+        self.hotkey_name = hotkey if hotkey in {f'F{i}' for i in range(1,13)} else 'F8'
+        self.rebind_requests = queue.Queue()
         self.paused = True
         self.reason = '初始暫停'
         self.hwnd = None
@@ -30,29 +40,66 @@ class Safety:
         self.ready.wait(2)
 
     def _monitor(self):
-        self.hotkey_ok = bool(u.RegisterHotKey(None,1,0x4000,0x77))
+        hotkey_id=1
+        self.hotkey_ok = bool(u.RegisterHotKey(None,hotkey_id,0x4000,0x6F+int(self.hotkey_name[1:])))
         self.ready.set()
         try:
             msg = W.MSG()
             while not self.closed.wait(.02):
+                while not self.rebind_requests.empty():
+                    name,result,done=self.rebind_requests.get()
+                    new_id=2 if hotkey_id==1 else 1
+                    ok=bool(u.RegisterHotKey(None,new_id,0x4000,0x6F+int(name[1:])))
+                    if ok:
+                        if self.hotkey_ok:u.UnregisterHotKey(None,hotkey_id)
+                        hotkey_id=new_id;self.hotkey_name=name;self.hotkey_ok=True
+                    result.append(ok);done.set()
                 while u.PeekMessageW(C.byref(msg),None,0,0,1):
-                    if msg.message == 0x0312:
-                        self.pause('F8 緊急停止')
+                    if msg.message == 0x0312 and msg.wParam==hotkey_id:
+                        if self.user_paused:self.on_hotkey('resume')
+                        elif self.running and not self.cancelled.is_set():
+                            self.suspend();self.on_hotkey('paused')
                 with self.lock:
                     if not self.paused and self.hwnd and u.GetForegroundWindow() != self.hwnd:
                         self.pause('遊戲失去焦點；請明確重新啟動測試')
         finally:
             if self.hotkey_ok:
-                u.UnregisterHotKey(None,1)
+                u.UnregisterHotKey(None,hotkey_id)
+
+    def rebind(self, name):
+        if name not in {f'F{i}' for i in range(1,13)}:raise ValueError('請選擇 F1 至 F12。')
+        if name==self.hotkey_name and self.hotkey_ok:return True
+        result=[];done=threading.Event()
+        self.rebind_requests.put((name,result,done))
+        if not done.wait(2):raise RuntimeError('熱鍵設定逾時，請重新開啟程式。')
+        return result[0]
+
+    def suspend(self):
+        with self.condition:
+            if self.cancelled.is_set():return
+            if not self.user_paused:self.pause_started=time.monotonic()
+            self.user_paused=True;self.paused=True;self.reason='使用者暫停'
+
+    def resume(self, window):
+        with self.condition:
+            if not self.user_paused:raise RuntimeError('目前並非手動暫停。')
+            self.arm(window)
+            if self.pause_started is not None:self.paused_seconds+=time.monotonic()-self.pause_started
+            self.pause_started=None;self.user_paused=False
+            self.condition.notify_all()
 
     def pause(self,reason='使用者暫停'):
         with self.lock:
             self.paused,self.reason = True,reason
             self.cancelled.set()
+            self.running=False
+            self.user_paused=False
+            self.condition.notify_all()
 
     def prepare(self):
         with self.lock:
             self.cancelled.clear()
+            self.running=True
 
     def arm(self,window):
         with self.lock:
@@ -79,7 +126,12 @@ class Safety:
                 self.pause('SendInput 未完整送出；不重試')
                 raise RuntimeError(self.reason)
 
+    def wait_if_paused(self):
+        with self.condition:
+            while self.user_paused and not self.cancelled.is_set():self.condition.wait(.1)
+
     def check(self,window):
+        self.wait_if_paused()
         if self.paused or self.cancelled.is_set() or self.hwnd!=window.hwnd:
             raise RuntimeError('輸入已暫停')
         r=client_rect(window.hwnd)
@@ -148,17 +200,20 @@ class Safety:
             vw,vh=u.GetSystemMetrics(78),u.GetSystemMetrics(79)
             dx=round((rect[0]+x-vx)*65535/(vw-1));dy=round((rect[1]+y-vy)*65535/(vh-1))
             return INPUT(0,PAYLOAD(mi=MOUSEINPUT(dx,dy,0,0xC001,0,0)))
-        with self.lock:self.check(window)
-        try:
-            with self.lock:
-                self._send([movement(*start),INPUT(0,PAYLOAD(mi=MOUSEINPUT(0,0,0,2,0,0)))])
-            for step in range(1,13):
-                if self.cancelled.wait(.025):raise RuntimeError('拖曳已暫停')
+        # Finish this short mouse gesture before a resumable pause; never leave
+        # the mouse held while waiting for the player to resume.
+        with self.lock:
+            with self.lock:self.check(window)
+            try:
                 with self.lock:
-                    self._send([movement(start[0]+(end[0]-start[0])*step/12,start[1]+(end[1]-start[1])*step/12)])
-        finally:
-            # Release even after F8/focus loss; never leave a held mouse button.
-            with self.lock:self._send([INPUT(0,PAYLOAD(mi=MOUSEINPUT(0,0,0,4,0,0)))])
+                    self._send([movement(*start),INPUT(0,PAYLOAD(mi=MOUSEINPUT(0,0,0,2,0,0)))])
+                for step in range(1,13):
+                    if self.cancelled.wait(.025):raise RuntimeError('拖曳已暫停')
+                    with self.lock:
+                        self._send([movement(start[0]+(end[0]-start[0])*step/12,start[1]+(end[1]-start[1])*step/12)])
+            finally:
+                # Release even after F8/focus loss; never leave a held mouse button.
+                with self.lock:self._send([INPUT(0,PAYLOAD(mi=MOUSEINPUT(0,0,0,4,0,0)))])
 
     def number(self,window,value):
         if type(value) is not int or value<=0:raise ValueError('領取數量必須是正整數')

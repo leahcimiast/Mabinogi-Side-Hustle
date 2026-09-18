@@ -63,8 +63,11 @@ class SafetyTests(unittest.TestCase):
                 self.skipTest('F8 in use by another application')
             s.prepare()
             self.assertTrue(u.PostThreadMessageW(s.thread.native_id,0x0312,1,0))
-            self.assertTrue(s.cancelled.wait(.5))
-            self.assertEqual(s.reason,'F8 緊急停止')
+            import time
+            end=time.monotonic()+.5
+            while not s.user_paused and time.monotonic()<end:time.sleep(.01)
+            self.assertTrue(s.user_paused);self.assertFalse(s.cancelled.is_set())
+            s.pause('stop')
             with patch('app.input_control.u.GetForegroundWindow',return_value=99):
                 s.prepare()
                 with s.lock:

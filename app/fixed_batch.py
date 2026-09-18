@@ -82,6 +82,42 @@ class Journal:
             raise
         self.batch=updated
 
+    def skip_missing_quest(self,quest,reason):
+        self.ready()
+        if self.data['active'] is not None:raise RuntimeError('已有啟用任務，不能略過。')
+        done=self.data['completed'];names=[q.quest for q in self.batch.completions]
+        removed=names[done:].count(quest)
+        if not removed:raise ValueError('任務沒有剩餘次數。')
+        names=names[:done]+[name for name in names[done:] if name!=quest]
+        updated=submission_plan(self.batch,names)
+        previous=dict(self.data)
+        skipped=dict(self.data.get('skipped_quests',{}))
+        skipped[quest]={'count':removed,'reason':reason}
+        self.data.update(submission_plan=names,skipped_quests=skipped)
+        try:self.save()
+        except Exception:self.data=previous;raise
+        self.batch=updated
+        return removed
+
+    def adopt_active(self,entries,quest,identity):
+        """Move one planned completion forward; credit it only after submission."""
+        self.ready()
+        if self.data['active'] is not None:raise RuntimeError('已有已啟用任務，不能取代。')
+        if quest not in {q.quest for q in entries}:raise ValueError('未知佈告欄任務。')
+        done=self.data['completed'];names=[q.quest for q in self.batch.completions]
+        remaining=names[done:]
+        if quest in remaining:remaining.remove(quest)
+        # An already-active quest must be finished even if its configured remainder was zero.
+        names=names[:done]+[quest]+remaining
+        updated=submission_plan(fixed_batch(entries),names)
+        previous=dict(self.data)
+        self.data['submission_plan']=names;self.data['active']={'index':done,'identity':identity}
+        try:self.save()
+        except Exception:
+            self.data=previous
+            raise
+        self.batch=updated
+
     def save(self):
         self.path.parent.mkdir(parents=True,exist_ok=True)
         temp=self.path.with_suffix('.tmp')
