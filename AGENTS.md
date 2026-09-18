@@ -7,6 +7,12 @@ and dynamic allocation requirements below for the current prototype:
 
 - Assume all 19 whitelist quest types are prepared, three completions each (57 total).
 - Do not scan scroll quantities or material stock quantities.
+- Submission may start from the open inventory material page. Detect the existing inventory and navigate directly to the quest filter without toggling I; reuse the quest page between missing-scroll skips.
+- If the bounded scroll search does not find the planned whitelist scroll before activation, skip all remaining completions for that quest, preserve completed history, log the skip, keep the quest inventory open and continue with the next quest. Do not treat skipped counts as completed or skip unresolved activation/submission.
+- After a known scroll is accepted, use the unique bulletin-board report indicator, not exact tracked-title OCR, to proceed. Keep the recorded quest for accounting. Initial adoption of an unrecorded active quest still requires identity; completion credit still waits for result closure and report disappearance.
+- Quest subcategory navigation only: swipe the header fully to its right end, then click the fixed 任務 position. Skip tab OCR and tab-selection OCR; retain item identity and other workflow checks.
+- Submission start uses a static bulletin-board preparation reminder, not a confirmation checkbox. After submission, recognize completion by the bottom wide green confirmation button geometry rather than title OCR; count only after closure and reporting-entry disappearance.
+- Submission relies on the game-filtered material: do not OCR-check the material name. Enable 自動放入 and verify the enabled submit control; retain quest identity and completion verification.
 - Retrieval starts in shared storage. Submission may start independently at the bulletin board, assuming the player already has all materials; do not require retrieval or manual-shortfall completion records.
 - Every launch starts a fresh batch; archive old progress, do not automatically resume it. New batch is a single-click reset once the worker has stopped.
 - Storage search continues while the content moves, even when OCR names repeat or are empty. Retry paced wheel input and distinguish a motionless panel from proven item absence.
@@ -24,6 +30,7 @@ and dynamic allocation requirements below for the current prototype:
 - Submission quantities are player-editable remaining counts per quest, default three, with zero to skip. Preserve completed history on stopped-worker edits; block edits during active/pending quests. Fresh batches reset defaults. Retrieval remains three completions worth per material.
 - Submission identifies scrolls by the item-name half of each inventory cell, permitting unique fuzzy OCR matches; do not repeat tooltip-name OCR or request name confirmation. Preserve plus signs, grades, material mappings, and explicit activation/completion verification.
 - Edit each submission remaining count directly in its table cell; save on Enter/focus loss, without a separate count/apply bar.
+- At submission start, inspect active bulletin quests before opening inventory. Finish any uniquely identified ready whitelist quest first, regardless of its position; count completion against that quest and then follow the remaining whitelist order. If its configured remainder is zero, include only the already-active completion. Do not credit completion before verified success; stop for unknown/non-whitelist/incomplete active quests.
 - Navigate the inventory top filter by a horizontal drag and click 任務. The vertical wheel did not move this bar in live testing. If drag fails, use bounded E fallback with fast cropped control OCR, verifying selection; avoid repeated full-screen OCR for navigation.
 
 ## Goal

@@ -130,7 +130,7 @@ class SearchContinuationTests(unittest.TestCase):
         self.runner.storage_top.assert_not_called()
         # Initial verified storage screen + final quantity/name read only;
         # the two wait checkpoints supply their own observations in production.
-        self.assertEqual(self.runner.screen.call_count,2)
+        self.assertEqual(self.runner.screen.call_count,1)
         self.assertEqual(self.runner.wait.call_count,2)
 
     def test_potato_variants_in_same_cell_do_not_compete(self):

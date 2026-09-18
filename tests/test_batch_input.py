@@ -6,6 +6,7 @@ from app.capture import GameWindow
 class BatchInputTests(unittest.TestCase):
     def setUp(self):
         self.s=Safety.__new__(Safety);self.s.lock=threading.RLock();self.s.paused=True;self.s.cancelled=threading.Event();self.s.hwnd=42
+        self.s.condition=threading.Condition(self.s.lock);self.s.user_paused=False;self.s.running=False
         self.w=GameWindow(42,'test','MabinogiMobile.exe',(0,0,1280,960))
     def test_all_primitives_reject_pause(self):
         with patch('app.input_control.u.SendInput') as send:

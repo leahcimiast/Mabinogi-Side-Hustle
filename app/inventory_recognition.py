@@ -8,6 +8,7 @@ from PIL import Image, ImageOps, ImageDraw, ImageFont
 from .recognition import Detection, match_items
 from .ocr_session import OcrSession
 from .name_candidates import make_review
+from .ocr_aliases import canonical_material
 
 @dataclass
 class Preview:
@@ -236,14 +237,19 @@ def _preview(image,entries,session,mode,times):
     return Preview(words,detections,mode,f'任務頁：{known} 格完整符合白名單（重讀補回 {recovered} 格）。另有 {sum(d.kind=="quest_fuzzy" for d in detections)} 格模糊採用；卷軸數量由玩家輸入，預設 3。只涵蓋本頁。',reviews)
 
 
-def match_scroll_tail(raw,entries):
-    """Match the item half, without confusing quest materials with scroll names."""
-    from .name_candidates import distance,material_candidate_allowed
+def scroll_item_tail(raw):
     text=compact(raw)
     if ':' in text:tail=text.split(':',1)[1]
     else:
         match=re.match(r'^.*?卷[軸帕鮋]?(.*)$',text)
         tail=match.group(1) if match else text
+    return canonical_material(tail)
+
+
+def match_scroll_tail(raw,entries):
+    """Match the item half, without confusing quest materials with scroll names."""
+    from .name_candidates import distance,material_candidate_allowed
+    tail=scroll_item_tail(raw)
     if len(tail.replace('+',''))<2:return None
     ranked=[];materials={compact(q.material) for q in entries}
     for q in entries:
@@ -266,9 +272,31 @@ def scroll_label_candidates(image,quest,entries,session,scale=2):
         images.append(ImageOps.expand(crop.resize((96*scale,50*scale),Image.Resampling.LANCZOS),40,'white'))
     results=[]
     for start in range(0,len(images),12):results.extend(session.recognize_many(images[start:start+12]))
-    found=[]
+    found=[];unresolved=[]
     for box,words in zip(boxes,results):
         inside=[w for w in words if 40<=w['x'] and 40<=w['y'] and w['x']+w['w']<=40+96*scale and w['y']+w['h']<=40+50*scale]
         raw=compact(line_text(inside))
-        if match_scroll_tail(raw,entries)==quest:found.append((box,raw))
+        matched=match_scroll_tail(raw,entries)
+        if matched==quest:found.append((box,raw))
+        elif raw and matched is None:unresolved.append(box)
+    # A green-channel image can erase the final character of short item names.
+    # Retry unread identities in their own padded color/gray name crops only.
+    if scale==2:
+        for start in range(0,len(unresolved),6):
+            group=unresolved[start:start+6];crops=[]
+            for x,y,right,bottom in group:
+                raw=image.crop((x-4,y,right+4,min(960,bottom+10)))
+                crops.extend(ImageOps.expand(im.resize((im.width*2,im.height*2)),20,'white')
+                             for im in (raw,ImageOps.autocontrast(raw.convert('L'))))
+            readings=session.recognize_many(crops)
+            for i,box in enumerate(group):
+                variants=[compact(line_text(words)) for words in readings[i*2:i*2+2]]
+                matches={match_scroll_tail(raw,entries) for raw in variants}-{None}
+                expected=compact(quest).split(':',1)[-1]
+                tails=[scroll_item_tail(raw) for raw in variants]
+                conflict=any(tail==expected+'+' or tail+'+'==expected or
+                             (expected=='羊毛' and tail.endswith('羊毛') and tail!=expected)
+                             for tail in tails)
+                if matches=={quest} and not conflict:
+                    found.append((box,next(raw for raw in variants if match_scroll_tail(raw,entries)==quest)))
     return found

@@ -50,19 +50,22 @@ class SubmissionOptionsTests(unittest.TestCase):
         self.journal.set_remaining(ENTRIES,counts)
         r=Runner(Mock(),Mock(),Mock(),self.journal,ENTRIES,Path('scripts/ocr.ps1'))
         r.rest=Mock();r.click=Mock();r.key=Mock();r.find_scroll=Mock(return_value=(755,202))
-        world=Mock();world.world.return_value=True;world.report.return_value=None
-        use=Mock();use.find.return_value=Label('使用',(800,800,900,850))
-        active=Mock();active.tracker.return_value=Label('取得鐵礦石',(1000,240,1150,265));active.report.return_value=Label('回報任務',(1000,270,1150,290))
-        submit=Mock();submit.submission.return_value=True;submit.has.return_value=True;submit.submitted_ready.return_value=True
+        world=Mock();world.world.return_value=True;world.report.return_value=None;world.tracker.return_value=None
+        active=Mock();active.tracker.side_effect=AssertionError('No name recheck after scroll use');active.report.return_value=Label('回報任務',(1000,270,1150,290))
+        submit=Mock();submit.submission.return_value=True;submit.has.side_effect=AssertionError("Material OCR must not be requested");submit.submitted_ready.return_value=True;submit.autofill_enabled.return_value=False
         complete=Mock();complete.completion.return_value=True
         closed=Mock();closed.world.return_value=True;closed.tracker.return_value=None;closed.report.return_value=None
         r.screen=Mock(side_effect=[world,submit,complete])
-        observations=iter([use,active,closed])
+        observations=iter([active,submit,closed])
         def wait(predicate,*args):
             screen=next(observations);self.assertTrue(predicate(screen));return screen
         r.wait=Mock(side_effect=wait)
-        r.quests(no_active_confirmed=True)
-        use.has.assert_not_called()
+        r.wait_use_button=Mock(return_value=Label('使用',(695,875,790,920)))
+        r.quests()
+        r.wait_use_button.assert_called_once()
+        r.click.assert_any_call((742.5,897.5))
+        r.click.assert_any_call((98,625))
+        submit.has.assert_not_called()
         self.assertEqual(self.journal.data['completed'],1)
         self.assertIsNone(self.journal.data['active']);self.assertIsNone(self.journal.data['pending'])
         r.find_scroll.assert_called_once()
@@ -94,36 +97,20 @@ class QuestNavigationTests(unittest.TestCase):
         r=Runner(Mock(),Mock(),Mock(),Mock(),ENTRIES,Path('scripts/ocr.ps1'))
         r.key=Mock();r.click=Mock();r.rest=Mock();r.progress=Mock()
         return r
-    def test_single_header_drag_then_click_and_verify(self):
-        r=self.runner();initial=Mock();initial.selected_tab.return_value=False;initial.find.return_value=None
-        visible=Mock();visible.selected_tab.return_value=False;visible.find.return_value=Label('任務',(1160,115,1210,150))
-        selected=Mock();selected.selected_tab.return_value=True
-        inventory=Mock();inventory.find.return_value=Label('道具',(930,880,975,920))
-        r.inventory_screen=Mock(side_effect=[initial,visible]);r.wait=Mock(side_effect=[inventory,selected])
-        self.assertIs(r.open_quests(),selected)
-        r.safety.drag.assert_called_once_with(r.window,(1185,135),(775,135))
-        r.safety.key.assert_not_called()
-        self.assertEqual([c.args[0] for c in r.key.call_args_list],[0x49])
-        self.assertEqual(r.click.call_args.args[0],visible.find.return_value.point)
-        self.assertTrue(r.wait.call_args.args[0](selected))
-    def test_already_selected_needs_no_scroll(self):
-        r=self.runner();screen=Mock();screen.selected_tab.return_value=True
-        r.wait=Mock(return_value=screen);r.inventory_screen=Mock(return_value=screen)
-        self.assertIs(r.open_quests(),screen)
-        r.safety.scroll.assert_not_called()
-
-    def test_drag_failure_uses_bounded_fast_keys_and_small_reader(self):
-        r=self.runner();missing=Mock();missing.selected_tab.return_value=False
-        missing.find.side_effect=lambda name,*args:Label('道具',(930,880,975,920)) if name=='道具' else None
-        selected=Mock();selected.selected_tab.return_value=True
-        r.wait=Mock(return_value=missing)
-        r.inventory_screen=Mock(side_effect=[missing,missing,selected])
-        self.assertIs(r.open_quests(),selected)
-        r.safety.key.assert_called_once_with(r.window,0x45)
-        self.assertEqual(r.wait.call_args.kwargs['reader'],r.inventory_screen)
-    def test_missing_quest_tab_stops_after_seven_keys(self):
-        r=self.runner();missing=Mock();missing.selected_tab.return_value=False
-        missing.find.side_effect=lambda name,*args:Label('道具',(930,880,975,920)) if name=='道具' else None
-        r.wait=Mock(return_value=missing);r.inventory_screen=Mock(return_value=missing)
-        with self.assertRaisesRegex(RuntimeError,'仍未找到任務'):r.open_quests()
-        self.assertEqual(r.safety.key.call_count,7)
+    def test_single_swipe_then_fixed_click_without_tab_ocr(self):
+        r=self.runner();inventory=Mock()
+        inventory.find.return_value=Label('道具',(930,880,975,920))
+        r.wait=Mock(return_value=inventory)
+        r.inventory_screen=Mock(side_effect=AssertionError('No tab OCR'))
+        r.open_quests()
+        self.assertEqual(r.safety.drag.call_count,1)
+        for call in r.safety.drag.call_args_list:
+            self.assertEqual(call.args,(r.window,(1185,135),(775,135)))
+        self.assertEqual(r.click.call_args.args[0],(1189,140))
+        r.inventory_screen.assert_not_called();r.safety.key.assert_not_called()
+        inventory.selected_tab.assert_not_called()
+    def test_interrupted_swipe_never_clicks_quest(self):
+        r=self.runner();r.wait=Mock()
+        r.safety.drag.side_effect=RuntimeError('lost focus')
+        with self.assertRaisesRegex(RuntimeError,'lost focus'):r.open_quests()
+        self.assertEqual(r.click.call_count,1) # Only the preceding item category.

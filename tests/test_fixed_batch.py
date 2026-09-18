@@ -39,7 +39,7 @@ class WithdrawalTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.j=Journal(Path(self.temp.name)/'p.json',fixed_batch(ENTRIES))
         self.j.data['withdrawn']=[m.name for m in self.j.batch.materials[1:]]
         self.safety=Mock();self.runner=Runner(Mock(),self.safety,Mock(),self.j,ENTRIES,Path('scripts/ocr.ps1'))
-        self.runner.wait_transfer_prompt=Mock();self.runner.storage_top=Mock();self.runner.rest=Mock();self.runner.click=Mock();self.runner.key=Mock()
+        self.runner.wait_transfer_confirmation=Mock();self.runner.wait_transfer_prompt=Mock();self.runner.storage_top=Mock();self.runner.rest=Mock();self.runner.click=Mock();self.runner.key=Mock()
         self.screen=Mock();self.screen.storage.return_value=True;self.screen.quantity_dialog.return_value=True
         self.runner.screen=Mock(return_value=self.screen)
         self.runner.wait=Mock(return_value=self.screen)
@@ -60,26 +60,22 @@ class WithdrawalTests(unittest.TestCase):
         self.assertEqual(calls[focus+1],call.rest(.5))
         self.assertEqual(calls[focus+2],call.number(self.runner.window,60))
 
-    def test_mismatched_field_never_confirms_transfer(self):
-        self.runner.vision.entered_quantity.return_value=59
+    def test_transfer_does_not_read_back_number(self):
+        self.runner.vision.entered_quantity.side_effect=AssertionError('numeric OCR must not run')
         self.runner.withdrawal()
-        self.assertIn('鐵礦石',self.j.data['skipped'])
+        self.runner.vision.entered_quantity.assert_not_called()
+        self.runner.wait_transfer_confirmation.assert_called_once()
+        self.safety.click.assert_called_once_with(self.runner.window,960,902)
+        self.assertIn('鐵礦石',self.j.data['withdrawn'])
+
+    def test_unavailable_green_button_never_confirms(self):
+        from app.automation import ScreenTimeout
+        self.runner.wait_transfer_confirmation.side_effect=ScreenTimeout('button unavailable')
+        self.runner.withdrawal()
+        self.safety.click.assert_not_called()
         self.assertIsNone(self.j.data['pending'])
         self.assertNotIn('鐵礦石',self.j.data['withdrawn'])
-        self.safety.click.assert_not_called()
-    def test_transient_unreadable_quantity_retries_without_retyping(self):
-        self.runner.vision.entered_quantity.side_effect=[None,None,60]
-        self.runner.withdrawal()
-        self.assertEqual(self.runner.vision.entered_quantity.call_count,3)
-        self.safety.number.assert_called_once()
-        self.safety.click.assert_called_once_with(self.runner.window,960,902)
-    def test_persistent_unreadable_quantity_never_confirms(self):
-        self.runner.vision.entered_quantity.return_value=None
-        self.runner.withdrawal()
-        self.assertIn('三次',self.j.data['skipped']['鐵礦石'])
-        self.assertEqual(self.runner.vision.entered_quantity.call_count,3)
-        self.safety.click.assert_not_called()
-        self.assertIsNone(self.j.data['pending'])
+
     def test_missing_title_does_not_block_matching_number(self):
         self.screen.item_title.return_value=None
         self.screen.tooltip_titles.return_value=[]
@@ -138,9 +134,9 @@ class QuestLoopTests(unittest.TestCase):
     def test_no_unknown_active_state_assumption(self):
         with tempfile.TemporaryDirectory() as d:
             j=Journal(Path(d)/'p.json',fixed_batch(ENTRIES));j.data['withdrawn']=[m.name for m in j.batch.materials]
-            runner=Runner(Mock(),Mock(),Mock(),j,ENTRIES,Path('scripts/ocr.ps1'));runner.screen=Mock()
-            with self.assertRaises(RuntimeError):runner.quests(no_active_confirmed=False)
-            runner.screen.assert_not_called()
+            runner=Runner(Mock(),Mock(),Mock(),j,ENTRIES,Path('scripts/ocr.ps1'));runner.screen=Mock(side_effect=RuntimeError("game check reached"))
+            with self.assertRaises(RuntimeError):runner.quests()
+            runner.screen.assert_called_once()
 
     def test_submission_without_retrieval_reaches_game_checks(self):
         with tempfile.TemporaryDirectory() as d:
@@ -149,7 +145,7 @@ class QuestLoopTests(unittest.TestCase):
             runner=Runner(Mock(),Mock(),Mock(),j,ENTRIES,Path('scripts/ocr.ps1'))
             runner.screen=Mock(side_effect=RuntimeError('game check reached'))
             with self.assertRaisesRegex(RuntimeError,'game check reached'):
-                runner.quests(no_active_confirmed=True)
+                runner.quests()
             runner.screen.assert_called_once()
             self.assertEqual(j.data['withdrawn'],[])
             self.assertEqual(j.data['completed'],0)

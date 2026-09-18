@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.0 — 2026-09-18
+
+First portable Windows release of 瑪奇M - 兼職小助手.
+
+- Combine material retrieval, sequential quest submission, and independent shared-storage stock checking in one compact window.
+- Prepare 19 material types for three completions each; allow per-quest remaining counts and finish uniquely identified ready active quests first.
+- Preserve completed history when missing scrolls are skipped; require result closure and report disappearance before completion credit.
+- Include scoped OCR, reviewed shared aliases, configurable pause/resume hotkeys, local reports, recovery controls, and the application icon.
+- Package version 1.0.0 consistently in the title, Windows executable metadata, ZIP, and checksum.
+- Full live 19-material / 57-quest batch, stock-scan coverage across layouts, and multi-monitor DPI behavior remain unverified. See README.md and VALIDATION.md.
+
+The entries below record development history and may describe superseded behavior.
+
+## 0.2.0-dev — Tab controls and resumable pause (unreleased)
+
+- Show version in the title; move retrieval controls and notices into their tabs.
+- Add persistent F1–F12 pause/resume binding, retaining the old key on registration failure.
+- Resume the same worker after bringing the game to the foreground; fatal stops still require recovery.
+- After entering withdrawal quantity, use the fixed green confirmation area without numeric OCR.
+- Rename the batch reset and remove the manual-retrieval confirmation button.
+
 ## 0.1.4 — Batch OCR and reviewed name suggestions
 
 - Reuse one local OCR process per scan; batch atlas and unresolved-cell images.

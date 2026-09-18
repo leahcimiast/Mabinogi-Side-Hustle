@@ -1,8 +1,9 @@
 """Bounded foreground workflow. Stock assumptions never become observed quantities."""
 import time
 from . import capture
+from .ocr_aliases import canonical_material
 from .inventory_recognition import compact,scroll_label_candidates
-from .flow_vision import Vision
+from .flow_vision import Vision,Screen,labels,tracker_identity
 from .name_candidates import distance,material_candidate_allowed
 from .storage_scroll import scroll_page
 from .name_memory import NameReviewRequired,NameReviewCompleted
@@ -12,24 +13,37 @@ class SkipMaterial(RuntimeError):
 
 class ScreenTimeout(RuntimeError):pass
 
+class MissingQuestScroll(RuntimeError):pass
+
 class Runner:
     def __init__(self,window,safety,session,journal,entries,script,log=lambda message:None,on_progress=lambda event:None,name_memory=None,on_name_review=None):
         self.window=window;self.safety=safety;self.session=session;self.vision=Vision(session)
         self.journal=journal;self.batch=journal.batch;self.entries=entries;self.script=script;self.log=log
-        self.name_memory=name_memory;self.on_name_review=on_name_review;self.storage_mode=False
+        self.name_memory=name_memory;self.on_name_review=on_name_review;self.storage_mode=False;self.submission_mode=False;self.quest_mode=False;self.tracker_world=True;self.inventory_ready=False
         self.on_progress=on_progress;self.current_item="";self.current_quantity=None
     def progress(self,step,item=None,quantity=None):
         if item is not None:self.current_item=item
         if quantity is not None:self.current_quantity=quantity
         self.on_progress({'step':step,'item':self.current_item,'quantity':self.current_quantity})
         self.log(step+(f' | {self.current_item} × {self.current_quantity}' if self.current_item else ''))
+    def clock(self):
+        paused=getattr(getattr(self,'safety',None),'paused_seconds',0)
+        return time.monotonic()-(paused if isinstance(paused,(int,float)) else 0)
     def check(self):self.safety.check(self.window)
     def rest(self,seconds=.3):
         if self.safety.cancelled.wait(seconds):raise RuntimeError('工作已暫停')
         self.check()
     def screen(self):
         self.check();image=capture.capture(self.window)
-        result=self.vision.observe_storage(image) if self.storage_mode else self.vision.observe(image)
+        pending=self.journal.data.get('pending')
+        if self.submission_mode and pending and pending['kind']=='complete':
+            result=Screen(image,[])
+            if result.completion():self.check();return result
+            result=self.vision.observe_dialogue(image)
+            self.check();return result
+        result=(self.vision.observe_storage(image) if self.storage_mode else
+                self.vision.observe_submission_controls(image) if self.submission_mode else
+                self.vision.observe_tracker(image,include_world=self.tracker_world) if self.quest_mode else self.vision.observe(image))
         self.check();return result
     def click(self,point):self.safety.click(self.window,*point);self.rest()
     def key(self,key):self.safety.key(self.window,key);self.rest()
@@ -37,15 +51,20 @@ class Runner:
         self.check();image=capture.capture(self.window)
         result=self.vision.observe_inventory_controls(image);self.check();return result
 
+    def inventory_category_screen(self):
+        self.check();image=capture.capture(self.window)
+        result=self.vision.observe_inventory_controls(image,category_only=True)
+        self.check();return result
+
     def wait(self,predicate,reason,seconds=12,reader=None):
         self.progress(f'等待畫面驗證（重試期限 {seconds} 秒）：{reason}')
-        end=time.monotonic()+seconds
-        while time.monotonic()<end:
+        end=self.clock()+seconds
+        while self.clock()<end:
             s=(reader or self.screen)()
             try:
                 if predicate(s):return s
             except NameReviewCompleted:
-                end=time.monotonic()+seconds
+                end=self.clock()+seconds
                 continue
             self.rest(.3)
         raise ScreenTimeout(reason+'；已暫停，沒有自動重試動作。')
@@ -125,7 +144,7 @@ class Runner:
         if skipped:
             lines=[f'{m.name} × {m.quantity}：{skipped[m.name]}' for m in self.batch.materials if m.name in skipped]
             self.log('本批次待手動補領清單：\n'+'\n'.join(lines))
-            self.safety.pause('自動領取已結束。請依「待手動補領」清單補齊，再確認已補領後進行交付。')
+            self.safety.pause('自動領取已結束。請依「待手動補領」清單補齊，備齊素材後即可進行交付。')
         else:self.safety.pause('素材領取批次結束。請自行移動到任務佈告欄，再按開始交付。')
         return self.safety.reason
 
@@ -150,13 +169,23 @@ class Runner:
 
     def wait_transfer_prompt(self,seconds=12):
         self.progress('等待物品提示的移至背包按鈕就緒')
-        deadline=time.monotonic()+seconds
-        while time.monotonic()<deadline:
+        deadline=self.clock()+seconds
+        while self.clock()<deadline:
             self.check();image=capture.capture(self.window)
             ready=self.vision.transfer_prompt_ready(image);self.check()
             if ready:return
             self.rest(.15)
         raise ScreenTimeout('物品提示的移至背包按鈕尚未就緒；未送出 Space。')
+
+    def wait_transfer_confirmation(self,seconds=5):
+        self.progress('等待移至背包按鈕就緒')
+        deadline=self.clock()+seconds
+        while self.clock()<deadline:
+            self.check();image=capture.capture(self.window)
+            ready=self.vision.transfer_confirmation_ready(image);self.check()
+            if ready:return
+            self.rest(.1)
+        raise ScreenTimeout('移至背包按鈕未就緒；未送出領取。')
 
     def withdraw_one(self,item,s):
         self.progress('搜尋素材',item.name,item.quantity)
@@ -177,7 +206,11 @@ class Runner:
             blocked=[x for x in names if (item.name=='羊毛' and x.text.endswith('羊毛') and ('級' in x.text or '高' in x.text))
                      or x.text==item.name+'+' or (item.name.endswith('+') and x.text==item.name[:-1])]
             names=[x for x in names if not any(abs(x.point[0]-bad.point[0])<30 and abs(x.point[1]-bad.point[1])<30 for bad in blocked)]
-            found=[x for x in names if x.text==compact(item.name)]
+            found=[]
+            for label in names:
+                if canonical_material(label.text)==compact(item.name) and not any(
+                        abs(label.point[0]-other.point[0])<30 and abs(label.point[1]-other.point[1])<30 for other in found):
+                    found.append(label)
             if not found:
                 # This only selects a tooltip to inspect. Withdrawal still requires
                 # an exact full material name in that tooltip.
@@ -191,9 +224,6 @@ class Runner:
                     if not any(abs(label.point[0]-other.point[0])<30 and abs(label.point[1]-other.point[1])<30 for _,other in cells):
                         cells.append((score,label))
                 if cells and cells[0][0]>=.66 and (len(cells)==1 or cells[0][0]-cells[1][0]>=.08):found=[cells[0][1]]
-            # Observed truncated OCR is a tooltip candidate, never a material identity.
-            if not found and item.name=='洋蔥':
-                found=[x for x in names if x.text=='洋蒽']
             if not found and item.name=='箭花':
                 found=[x for x in names if x.text=='花']
             if len(found)==1:target=found[0];break
@@ -221,9 +251,8 @@ class Runner:
         self.progress('清除預設數量並輸入領取量')
         self.click((960,788));self.rest(.5)  # Allow the quantity field to receive focus.
         self.safety.number(self.window,item.quantity)
-        self.safety.scroll(self.window,80,90,0);self.rest(.5)
-        self.progress('核對輸入的領取量')
-        observed=self.verify_quantity(item.name,item.quantity)
+        self.rest(.12)
+        self.wait_transfer_confirmation()
         self.progress('送出領取，準備下一項')
         self.journal.begin('withdraw',item.name)
         # User-selected policy: a successfully dispatched claim counts as retrieved.
@@ -236,100 +265,144 @@ class Runner:
     def expected_tracker(self,s,q):
         tail=q.quest.replace('：',':').split(':',1)[-1].strip()
         return s.tracker(tail) or s.tracker(q.material)
-    def open_quests(self):
-        self.key(0x49)
-        s=self.wait(lambda s:s.find('道具',(700,850,1230,950)) is not None,'等待背包道具分類',reader=self.inventory_screen)
+    def wait_use_button(self,seconds=12):
+        self.progress(f'等待卷軸綠色使用按鈕（固定位置與顏色，最多 {seconds} 秒）')
+        deadline=self.clock()+seconds
+        while self.clock()<deadline:
+            self.check();image=capture.capture(self.window)
+            button=self.vision.quest_use_button(image);self.check()
+            if button is not None:return button
+            self.rest(.15)
+        raise ScreenTimeout('未確認卷軸綠色使用按鈕；未啟用任務。')
+
+    def open_quests(self,inventory=None):
+        if inventory is None:
+            self.key(0x49)
+            inventory=self.wait(lambda s:s.find('道具',(700,850,1230,950)) is not None,'等待背包道具分類',reader=self.inventory_category_screen)
+        s=inventory
         self.click(s.find('道具',(700,850,1230,950)).point)
-        s=self.inventory_screen()
-        if s.selected_tab('任務'):return s
-        tab=s.find('任務',(700,95,1260,175))
-        if tab is None:
-            self.progress('橫向拖曳篩選列至末端，尋找任務')
-            self.safety.drag(self.window,(1185,135),(775,135));self.rest(.2)
-            s=self.inventory_screen()
-            # Some game builds do not accept dragging. Use the known E shortcut,
-            # but read only the small header/footer between keys, not the whole screen.
-            for step in range(7):
-                if s.selected_tab('任務'):return s
-                tab=s.find('任務',(700,95,1260,175))
-                if tab is not None:break
-                if step==0:self.log('拖曳後任務尚未顯示；改用 E 快速切換並局部驗證。')
-                if not s.find('道具',(700,850,1230,950)):raise RuntimeError('背包畫面已變更；停止切換。')
-                self.safety.key(self.window,0x45);self.rest(.12);s=self.inventory_screen()
-            if s.selected_tab('任務'):return s
-            tab=s.find('任務',(700,95,1260,175))
-            if tab is None:raise RuntimeError('拖曳及快速切換後仍未找到任務篩選；請手動切至任務後重試。')
-        self.click(tab.point)
-        return self.wait(lambda s:s.selected_tab('任務'),'未確認任務篩選已選取',reader=self.inventory_screen)
+        self.progress('篩選列滑到最右端，再點固定任務位置（不做分類 OCR）')
+        # One full leftward swipe exposes the rightmost filter.
+        # Coordinates are relative to the supported 1280x960 game content area.
+        self.safety.drag(self.window,(1185,135),(775,135))
+        self.rest(.35)
+        self.click((1189,140))
+        self.inventory_ready=True
     def find_scroll(self,q):
-        self.open_quests();self.safety.scroll(self.window,1000,520,35);self.rest(.4)
-        seen=set()
-        for page in range(20):
-            s=self.inventory_screen()
-            if not s.selected_tab('任務'):raise RuntimeError('任務清單畫面已變更；停止搜尋。')
-            located=scroll_label_candidates(s.image,q.quest,self.entries,self.session)
-            if not located:located=scroll_label_candidates(s.image,q.quest,self.entries,self.session,scale=4)
+        if not self.inventory_ready:self.open_quests()
+        self.safety.scroll(self.window,1000,520,35);self.rest(.4)
+        from .quest_scroll import quest_list_moved
+        previous=None;stationary=0
+        for page in range(6):
+            self.check();image=capture.capture(self.window);self.check()
+            if previous is not None and not quest_list_moved(previous,image):
+                stationary+=1
+                if stationary>=2:
+                    self.log('卷軸清單連續兩次捲動未見位移；結束搜尋，不重複 OCR。')
+                    break
+                self.safety.scroll(self.window,1100,650,-3);self.rest(.4)
+                continue
+            stationary=0
+            located=scroll_label_candidates(image,q.quest,self.entries,self.session)
+            if not located:located=scroll_label_candidates(image,q.quest,self.entries,self.session,scale=4)
             self.check()
-            self.log(f'卷軸搜尋第 {page+1} 頁：'+(' | '.join(raw for _,raw in located) or '未辨識到目標名稱後半段'))
+            self.log(f'卷軸搜尋畫面 {page+1}/6：'+(' | '.join(raw for _,raw in located) or '未辨識到目標名稱後半段'))
             if len(located)>1:raise RuntimeError('同頁有多個卷軸候選，請整理背包後重試。')
             if located:
                 (x1,y1,x2,y2),raw=located[0]
                 self.log(f'卷軸名稱：{raw} → {q.quest}；沿用清單格位，不重讀提示名稱。')
                 return ((x1+x2)/2,y1-45)
-            signature=s.image.crop((700,170,1230,780)).resize((106,122)).tobytes()
-            if signature in seen:break
-            seen.add(signature);self.safety.scroll(self.window,1000,520,-3);self.rest(.4)
-        raise RuntimeError(f'未找到卷軸 {q.quest}，不推算堆疊數量、不啟用其他任務。')
-    def quests(self,no_active_confirmed=False):
+            previous=image
+            if page<5:self.safety.scroll(self.window,1000,520,-3);self.rest(.4)
+        raise MissingQuestScroll(f'搜尋後未找到卷軸 {q.quest}')
+    def quests(self):
+        self.quest_mode=True;self.tracker_world=True;self.inventory_ready=False
+        self.submission_mode=False
         self.journal.ready()
-        if self.journal.data['active'] is None and not no_active_confirmed:raise RuntimeError('請先確認沒有尚未完成的佈告欄任務。')
-        while self.journal.data['completed']<len(self.batch.completions):
-            index=self.journal.data['completed'];q=self.batch.completions[index]
-            self.progress(f'交付 {index+1}/{len(self.batch.completions)}，第 {q.ordinal}/{sum(x.quest==q.quest for x in self.batch.completions)} 次',q.quest,1)
+        first=True
+        while first or self.journal.data['completed']<len(self.batch.completions):
+            first=False
+            index=self.journal.data['completed'];q=self.batch.completions[index] if index<len(self.batch.completions) else None
+            if q is not None:self.progress(f'交付 {index+1}/{len(self.batch.completions)}，第 {q.ordinal}/{sum(x.quest==q.quest for x in self.batch.completions)} 次',q.quest,1)
             if self.journal.data['active'] is None:
-                initial=self.screen()
-                if initial.report():raise RuntimeError('畫面已有可回報任務，請先完成或恢复追蹤後核對；不啟用第二個。')
-                if not initial.world():raise RuntimeError('請站在佈告欄旁，關閉背包與對話後再開始。')
-                point=self.find_scroll(q);self.click(point)
-                s=self.wait(lambda s:s.find('使用',(600,650,1250,950)) is not None,'等待卷軸使用按鈕')
-                self.journal.begin('activate',{'index':index,'identity':None})
-                self.click(s.find('使用',(600,650,1250,950)).point)
-                s=self.wait(lambda s:self.expected_tracker(s,q) is not None and s.report() is not None,'啟用後任務身份或回報狀態未確認',20)
-                self.journal.data['pending']['value']['identity']=self.expected_tracker(s,q).text
-                self.journal.confirm()
+                initial=None
+                if not self.inventory_ready:
+                    initial=self.screen()
+                    if not initial.world() and initial.report() is None:
+                        inventory=self.inventory_category_screen()
+                        if not inventory.find('道具',(700,850,1230,950)):
+                            raise RuntimeError('請站在佈告欄旁，並關閉對話或物品詳細視窗。')
+                        if q is None:break
+                        self.progress('已在背包內，直接切換任務分類')
+                        self.open_quests(inventory=inventory)
+                        initial=None
+                if initial is not None and initial.report():
+                    report=initial.report();matches=[]
+                    if isinstance(initial,Screen):
+                        readings=[f'{title.text} ({round(title.box[0])},{round(title.box[1])})' for title in labels(initial.words,(900,180,1275,520))]
+                        self.log('追蹤欄原始辨識：'+' | '.join(readings))
+                    for entry in self.entries:
+                        track=self.expected_tracker(initial,entry)
+                        if track is not None and 0<=report.box[1]-track.box[3]<=80 and abs(report.box[2]-track.box[2])<=150:
+                            matches.append((entry,track))
+                    if len(matches)!=1:raise RuntimeError(f'已有回報任務，但白名單身份不明或不唯一（符合 {len(matches)} 項）；不啟用另一張卷軸。')
+                    entry,track=matches[0]
+                    self.journal.adopt_active(self.entries,entry.quest,track.text)
+                    self.batch=self.journal.batch;q=self.batch.completions[index];s=initial
+                    self.progress('先交付已啟用任務；完成後計入該任務一次',q.quest,1)
+                else:
+                    if initial is not None and any(self.expected_tracker(initial,entry) is not None for entry in self.entries):raise RuntimeError('已有白名單任務但尚未確認可回報；請補齊素材或恢復追蹤，不啟用另一張。')
+                    if q is None:break
+                    try:point=self.find_scroll(q)
+                    except MissingQuestScroll as error:
+                        skipped=self.journal.skip_missing_quest(q.quest,str(error))
+                        self.batch=self.journal.batch
+                        self.progress(f'未找到卷軸；略過本任務剩餘 {skipped} 次',q.quest,0)
+                        self.inventory_ready=True
+                        self.log('沿用目前任務背包頁，繼續下一種卷軸。')
+                        continue
+                    self.click(point)
+                    button=self.wait_use_button()
+                    self.journal.begin('activate',{'index':index,'identity':q.quest})
+                    self.click(button.point)
+                    self.inventory_ready=False
+                    self.tracker_world=False
+                    s=self.wait(lambda s:s.report() is not None,'等待啟用後佈告欄回報狀態',20)
+                    self.journal.confirm();self.tracker_world=True
             else:s=self.screen()
             active=self.journal.data['active']
             if active['index']!=index:raise RuntimeError('進度與已啟用任務不一致。')
-            track=self.expected_tracker(s,q)
-            if not track or not s.report():raise RuntimeError('現有任務未確認可回報；請恢复追蹤或檢查缺少素材。')
-            if active.get('identity') and track.text!=active['identity']:raise RuntimeError('追蹤任務名稱已變更。')
-            active['identity']=track.text;self.journal.save()
+            report=s.report()
+            if report is None:raise RuntimeError('現有任務未確認可回報；請恢復追蹤或檢查缺少素材。')
             self.progress('開啟任務回報，等待交付畫面（最多 30 秒）')
-            self.click(track.point)
-            dialogues=0;deadline=time.monotonic()+30
+            self.submission_mode=True
+            self.click(report.point)
+            dialogues=0;deadline=self.clock()+30
             while True:
                 s=self.screen()
                 if s.submission():break
                 if s.dialogue() and dialogues<3:self.key(0x20);dialogues+=1
-                if time.monotonic()>deadline:raise RuntimeError('未到達交付畫面；請確認人在佈告欄旁。')
-                self.rest(.4)
-            if not s.has(q.material,(240,230,440,420)):raise RuntimeError('提交畫面的素材名稱不符。')
-            if not s.submitted_ready(q.material):
+                if self.clock()>deadline:raise RuntimeError('未到達交付畫面；請確認人在佈告欄旁。')
+                self.rest(.1)
+            if not s.autofill_enabled():
                 self.progress('啟用自動放入')
                 self.click((98,625))
-                s=self.wait(lambda s:s.submitted_ready(q.material),'自動放入後提交按鈕未就緒；可能素材不足')
+                s=self.wait(lambda s:s.submitted_ready(),'自動放入後提交按鈕未就緒；可能素材不足')
+            elif not s.submitted_ready():
+                s=self.wait(lambda s:s.submitted_ready(),'提交按鈕未就緒；可能素材不足')
             self.progress('提交任務，等待通關（最多 30 秒）')
             self.journal.begin('complete',index)
             self.click((340,558))
-            deadline=time.monotonic()+30;dialogues=0
+            deadline=self.clock()+30;dialogues=0
             while True:
                 s=self.screen()
                 if s.completion(active['identity']):break
                 if s.dialogue() and dialogues<3:self.key(0x20);dialogues+=1
-                if time.monotonic()>deadline:raise RuntimeError('未確認任務通關；結果待核對，不啟用下一張。')
-                self.rest(.3)
+                if self.clock()>deadline:raise RuntimeError('未確認任務通關；結果待核對，不啟用下一張。')
+                self.rest(.1)
             self.key(0x20)
-            self.wait(lambda s:s.world() and self.expected_tracker(s,q) is None and not s.report(),'完成畫面／回報追蹤尚未消失')
+            self.submission_mode=False
+            self.wait(lambda s:s.world() and not s.report(),'完成畫面／回報追蹤尚未消失')
             self.journal.confirm();self.progress('本次交付已完成')
             self.log(f'已完成 {index+1}/{len(self.batch.completions)}：{q.quest}')
         self.safety.pause(f'{len(self.batch.completions)} 次任務批次已完成；不再啟用剩餘卷軸。')
