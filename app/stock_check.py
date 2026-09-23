@@ -34,6 +34,7 @@ class StockResult:
     cells: dict = field(default_factory=dict)
     complete: bool = False
     note: str = '尚未完成掃描'
+    finished_at: str = ''
 
     def add(self, cells, offset):
         for cell in cells:
@@ -49,21 +50,27 @@ class StockResult:
                 continue
             self.cells[key] = cell
 
-    def rows(self, entries, cycles):
+    def totals(self):
         totals = Counter()
-        uncertain = set()
-        unidentified = False
         for cell in self.cells.values():
-            if cell.uncertain:
-                if cell.name is None: unidentified = True
-                else: uncertain.add(cell.name)
-            elif cell.name is not None and cell.count is not None:
+            if not cell.uncertain and cell.name is not None and cell.count is not None:
                 totals[cell.name] += cell.count
-        rows = []
-        for name, needed in requirements(entries, cycles).items():
-            exact = totals[name] >= needed or (self.complete and not unidentified and name not in uncertain)
-            rows.append((name, needed, totals[name], max(0, needed-totals[name]) if exact else None))
-        return rows
+        return totals
+
+    def uncertain_materials(self, entries, cycles):
+        """Keep confidence separate from the numeric, observed-stock shortage."""
+        totals = self.totals()
+        unidentified = any(cell.uncertain and cell.name is None for cell in self.cells.values())
+        uncertain = {cell.name for cell in self.cells.values()
+                     if cell.uncertain or cell.count is None}
+        return {name for name, needed in requirements(entries, cycles).items()
+                if totals[name] < needed and
+                (not self.complete or unidentified or name in uncertain)}
+
+    def rows(self, entries, cycles):
+        totals = self.totals()
+        return [(name, needed, totals[name], max(0, needed-totals[name]))
+                for name, needed in requirements(entries, cycles).items()]
 
 
 def panel(image):
@@ -107,6 +114,17 @@ class StockVision:
         self.log = log
         self.vision = vision
         self.names = set(requirements(entries, 1))
+
+    @staticmethod
+    def iron_icon(image, box):
+        """Corroborate an iron-name candidate using its blue icon, above digits."""
+        x, y, right, _ = box
+        icon = image.crop((x+12, y-65, right-12, y-31)).convert('RGB')
+        pixels = list(icon.get_flattened_data())
+        blue = [p for p in pixels if p[2] > 65 and p[2] > p[0]*1.35
+                and p[2] > p[1]*1.08]
+        dark = sum(p[0] < 65 and p[1] < 150 for p in blue)
+        return len(blue) >= len(pixels)*.10 and dark >= len(pixels)*.04
 
     def resolve_name(self, readings):
         # Specific full-label OCR confusions reproduced from storage screenshots.
@@ -218,6 +236,10 @@ class StockVision:
                 cells.append(StockCell(prior.column,y,prior.name,prior.count,False))
                 continue
             name = self.resolve_name(readings)
+            if name == '鐵礦石' and not self.iron_icon(image, box):
+                self.log('鐵礦石圖示未通過深藍色核對；保留待核。')
+                cells.append(StockCell(round((x-57)/95), y, name, None, True))
+                continue
             if name and not conflict:
                 if name not in readings:
                     self.log('品名比對：'+'／'.join(sorted(readings))+' → '+name)
@@ -267,6 +289,11 @@ class StockVision:
                 count = (ranked[0][0] if ranked and ranked[0][1]>=2
                          and (len(ranked)==1 or ranked[0][1]>ranked[1][1]) else None)
                 cell = cells[slot]
+                # Correlated missing-leading-digit errors must not win a vote.
+                if any(a != b and str(a).endswith(str(b)) for a in votes for b in votes):
+                    count = self.retry_conflicting_count(image, group[index][1], check, votes)
+                    if count is not None:
+                        self.log(f'數量字形核對：{cell.name} × {count}（原讀值 {values}）')
                 if count is None and len(votes) <= 1:
                     if not votes:
                         count = self.retry_missing_count(image, group[index][1], check)
@@ -279,6 +306,41 @@ class StockVision:
                     self.log(f'數量待核：{cell.name}，各方法讀值 {values}')
                 cells[slot] = StockCell(cell.column, cell.y, cell.name, count, count is None)
         return cells
+
+
+    def retry_conflicting_count(self, image, box, check, votes):
+        """Resolve suffix conflicts only with full digit-shape and OCR agreement."""
+        from .stock_digits import digit_strip
+        values = sorted(votes, key=lambda value: len(str(value)))
+        if not 2 <= len(values) <= 4 or not any(
+                a != b and str(a).endswith(str(b)) for a in values for b in values):
+            return None
+        check()
+        raw = image.crop(box)
+        strips = [digit_strip(raw, threshold) for threshold in (160, 180)]
+        if any(strip is None for strip in strips):
+            return None
+        first, second = strips
+        if (first[1] != second[1] or first[1] != len(str(values[-1]))
+                or any(abs(a-b)>2 for a,b in zip(first[2],second[2]))):
+            return None
+        crops = [ImageOps.expand(strip.resize((strip.width*scale,strip.height*scale)),
+                                 24, 'white')
+                 for strip, _, _ in strips for scale in (4,6)]
+        results = self.vision.session.recognize_many(crops)
+        check()
+        readings = [parse_count(words) for words in results]
+        # Both masks must read, with at least three supporting reads and no
+        # conflicting numeric read. They must corroborate an original candidate and the
+        # number of complete connected glyphs; never simply choose the maximum.
+        observed = [reading for reading in readings if reading is not None]
+        value = observed[0] if observed else None
+        if (value in votes and len(str(value)) == first[1]
+                and len(observed) >= 3 and any(v is not None for v in readings[:2])
+                and any(v is not None for v in readings[2:])
+                and all(reading == value for reading in observed)):
+            return value
+        return None
 
 
     def retry_neutral_count(self, image, box, check, expected=None):
@@ -355,15 +417,25 @@ class StockVision:
                                     and w['y']+w['h']<=16+height])
                 if value is not None:votes[value]+=1
             ranked = votes.most_common()
-            if ranked and ranked[0][1]>=2 and (len(ranked)==1 or ranked[0][1]>ranked[1][1]):
+            if any(a != b and str(a).endswith(str(b)) for a in votes for b in votes):
+                value = self.retry_conflicting_count(
+                    image, (left,top+offset,right,bottom+offset), check, votes)
+                if value is None:
+                    return None
+                candidates.append(value)
+            elif ranked and ranked[0][1]>=2 and (len(ranked)==1 or ranked[0][1]>ranked[1][1]):
                 candidates.append(ranked[0][0])
             elif votes:
                 return None  # A conflicting nearby crop is not evidence of recovery.
         return candidates[0] if len(candidates)>=2 and len(set(candidates))==1 else None
 
 
+class StockBoundaryUncertain(RuntimeError):
+    """Both wheel directions were motionless on an otherwise validated screen."""
+
+
 class StockScanner:
-    """Separate from Runner and Journal. Only captures and checked wheel input."""
+    """Separate from Runner and Journal; checked filter controls, never transfers."""
     def __init__(self, window, safety, session, entries, progress=lambda message: None,
                  publish=lambda result: None):
         self.window, self.safety = window, safety
@@ -380,20 +452,80 @@ class StockScanner:
             raise RuntimeError('盤點已暫停')
         self.check()
 
-    def screen(self):
+    def snapshot(self):
         self.check()
         image = capture.capture(self.window)
-        # OCR only the left header. Item OCR below also stays in the left panel.
-        s = self.vision._observe_regions(image, [(35, 0, 285, 180)], variant_count=2)
         self.check()
-        if not s.shared():
-            raise RuntimeError('請開啟公用保管箱，並關閉物品提示及數量視窗。')
-        r, g, b = image.getpixel((76, 96))[:3]
-        if not (r > 140 and 45 < g < 190 and b < 100) or not s.has('全部', (35, 75, 120, 120)):
-            raise RuntimeError('盤點需要保管箱的「全部」分類。')
-        if not s.has('全部', (90, 125, 165, 180)):
-            raise RuntimeError('盤點需要保管箱搜尋篩選為「全部」。')
         return image
+
+    def screen(self):
+        from .stock_controls import storage_kind, all_category
+        image = self.snapshot()
+        if storage_kind(image) != 'shared':
+            raise RuntimeError('請開啟公用保管箱，並關閉物品提示及數量視窗。')
+        if not all_category(image):
+            raise RuntimeError('盤點需要保管箱的「全部」分類。')
+        return image
+
+    def prepare(self):
+        from .stock_controls import (storage_kind, all_category, filter_open,
+                                     rarity_selected, only_general, search_empty, RARITIES)
+
+        def click(x, y):
+            self.safety.click(self.window, x, y)
+            self.rest(.3)
+            # Move the cursor off chips before examining their outlines.
+            self.safety.scroll(self.window, 650, 65, 0)
+            self.rest(.15)
+
+        def wait_for(predicate, message):
+            for _ in range(8):
+                image = self.snapshot()
+                if predicate(image):
+                    return image
+                self.rest(.2)
+            raise RuntimeError(message)
+
+        self.progress('盤點：確認公用保管箱，設定僅顯示一般稀有度')
+        image = self.snapshot()
+        kind = storage_kind(image)
+        if kind is None:
+            raise RuntimeError('無法確認保管箱畫面；請關閉其他視窗並開啟保管箱。')
+        if kind == 'normal':
+            click(198, 39)
+            image = wait_for(lambda im: storage_kind(im) == 'shared', '切換公用保管箱未確認；已停止。')
+        if not all_category(image):
+            click(76, 96)
+            image = wait_for(lambda im: storage_kind(im) == 'shared' and all_category(im),
+                             '切換全部分類未確認；已停止。')
+        click(55, 153)
+        image = wait_for(filter_open, '搜尋篩選視窗未開啟；已停止。')
+        click(960, 182)
+        self.safety.key(self.window, 0x41, control=True)
+        self.rest(.15)
+        self.safety.key(self.window, 0x08)
+        self.rest(.2)
+        image = self.snapshot()
+        for index, (x, y) in enumerate(RARITIES):
+            wanted = index == 0
+            if rarity_selected(image, index) != wanted:
+                click(x, y)
+                image = wait_for(lambda im: filter_open(im) and rarity_selected(im, index) == wanted,
+                                 '稀有度切換結果未確認；已停止。')
+        if not only_general(image):
+            raise RuntimeError('無法確認僅選取一般稀有度；已停止。')
+        # Blur the text field before Space so it activates Apply instead of typing.
+        click(960, 560)
+        image = self.snapshot()
+        if not only_general(image):
+            raise RuntimeError('套用前稀有度狀態變更；已停止。')
+        if not search_empty(image):
+            raise RuntimeError('無法確認搜尋文字已清空；已停止，請清除搜尋後重試。')
+        self.safety.key(self.window, 0x20)
+        self.rest(.35)
+        wait_for(lambda im: storage_kind(im) == 'shared' and all_category(im),
+                 '篩選套用後未回到公用保管箱；已停止。')
+        return self.screen()
 
     def move(self, before, direction, notches=4, read_controls=True):
         for x, y in ((350, 550), (540, 660)):
@@ -424,7 +556,7 @@ class StockScanner:
         # Verify wheel movement away from the edge and return to the same pixels.
         away, delta = self.move(image, -direction, notches=1)
         if not delta:
-            raise RuntimeError('清單上下皆無位移，無法確認邊界（也可能只有一頁）；盤點未完成。')
+            raise StockBoundaryUncertain('清單可能只有一頁或捲動未生效；已保留目前可見素材，尚未確認完整庫存。')
         returned, reverse = self.move(away, direction, notches=1)
         if abs(reverse+delta) > 2 or displacement(image, returned, direction) != 0:
             raise RuntimeError('清單邊界返回核對失敗；盤點未完成。')
@@ -483,12 +615,18 @@ class StockScanner:
     def run(self):
         try:
             self.progress('盤點：檢查公用保管箱並回到清單頂端')
-            image = self.screen()
+            image = self.prepare()
             for _ in range(300):
                 frames,at_end=self.scroll_batch(image,1)
                 if frames:image=frames[-1][0]
                 if at_end:
-                    image = self.boundary(image, 1)
+                    try:
+                        image = self.boundary(image, 1)
+                    except StockBoundaryUncertain:
+                        # Useful partial observations, never a claim of full stock.
+                        # Capture afresh and validate controls before item OCR.
+                        self.scan_page(self.screen(), 0, 1)
+                        raise
                     break
             else:
                 raise RuntimeError('回頂超過安全上限；尚未確認清單頂端。')

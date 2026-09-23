@@ -37,10 +37,12 @@ class StockModelTests(unittest.TestCase):
     def test_missing_vs_unreadable_vs_partial(self):
         result = StockResult(complete=True)
         result.add([StockCell(0,346,'鐵礦石',None,True)],0)
-        self.assertEqual(result.rows(ENTRIES,1)[0][3],None)
+        self.assertEqual(result.rows(ENTRIES,1)[0][3],60)
+        self.assertEqual(result.uncertain_materials(ENTRIES,1), {'鐵礦石'})
         self.assertEqual(result.rows(ENTRIES,1)[1][3],30)
         result.complete=False
-        self.assertTrue(all(row[3] is None for row in result.rows(ENTRIES,1)))
+        self.assertEqual([row[3] for row in result.rows(ENTRIES,1)], [60,30])
+        self.assertEqual(result.uncertain_materials(ENTRIES,1), {'鐵礦石','蜘蛛網'})
 
     def test_confirmed_stack_keeps_previous_count_despite_later_conflict(self):
         result=StockResult(complete=True)
@@ -78,6 +80,11 @@ class StockModelTests(unittest.TestCase):
 
 
 class StockVisionTests(unittest.TestCase):
+    def iron_image(self, y=346):
+        image=Image.new('RGB',(1280,960))
+        image.paste((20,90,180),(80,y-64,119,y-35))
+        return image
+
     def reader(self, labels):
         vision=Mock()
         vision.storage_names.return_value=labels
@@ -89,18 +96,18 @@ class StockVisionTests(unittest.TestCase):
         reader=self.reader([Label('鐵礦石',(57,281,151,341))])
         reader.vision.session.recognize_many.return_value=[
             [word('300',140 if i<6 and i%2 else 20)] for i in range(8)]
-        cell=reader.cells(Image.new('RGB',(1280,960)))[0]
+        cell=reader.cells(self.iron_image())[0]
         self.assertEqual((cell.name,cell.count,cell.uncertain),('鐵礦石',300,False))
         reader.vision.session.recognize_many.return_value=[
             [word('300' if i<4 else '800',140 if i<6 and i%2 else 20)] for i in range(8)]
-        self.assertTrue(reader.cells(Image.new('RGB',(1280,960)))[0].uncertain)
+        self.assertTrue(reader.cells(self.iron_image())[0].uncertain)
 
     def test_last_fully_visible_name_row_is_counted(self):
         reader=self.reader([Label('鐵礦石',(57,860,151,920))])
         reader.vision._storage_boxes=[(57,925,151,955)]
         reader.vision.session.recognize_many.return_value=[
             [word('80',140 if i<6 and i%2 else 20)] for i in range(8)]
-        self.assertEqual(reader.cells(Image.new('RGB',(1280,960)))[0].count,80)
+        self.assertEqual(reader.cells(self.iron_image(y=925))[0].count,80)
 
     def test_grade_plus_conflict_never_counted(self):
         for target, other in [('羊毛','高級羊毛'),('高級原木+','高級原木')]:
@@ -132,6 +139,7 @@ class StockScannerTests(unittest.TestCase):
         safety=Mock();safety.cancelled=threading.Event()
         scanner=StockScanner(Mock(),safety,Mock(),ENTRIES)
         scanner.screen=Mock(return_value='top')
+        scanner.prepare=Mock(return_value='top')
         scanner.boundary=Mock(side_effect=lambda image,direction:image)
         return scanner
 
@@ -157,13 +165,17 @@ class StockScannerTests(unittest.TestCase):
         scanner.publish=lambda result:published.append(copy.deepcopy(result))
         with self.assertRaisesRegex(RuntimeError,'focus lost'):scanner.run()
         self.assertFalse(published[-1].complete)
-        self.assertIsNone(published[-1].rows(ENTRIES,1)[0][3])
+        self.assertEqual(published[-1].rows(ENTRIES,1)[0][3],40)
+        self.assertIn('鐵礦石', published[-1].uncertain_materials(ENTRIES,1))
 
     def test_unresponsive_wheel_is_not_end(self):
         scanner=self.scanner()
         scanner.boundary=StockScanner.boundary.__get__(scanner)
         scanner.move=Mock(return_value=('same',0))
+        scanner.reader.cells=Mock(return_value=[StockCell(0,346,'鐵礦石',20)])
         with self.assertRaises(RuntimeError):scanner.run()
+        self.assertFalse(scanner.result.complete)
+        self.assertEqual(scanner.result.totals()['鐵礦石'],20)
 
     def test_f8_or_focus_failure_prevents_capture(self):
         scanner=StockScanner(Mock(),Mock(),Mock(),ENTRIES)
@@ -192,7 +204,7 @@ class StockUITests(unittest.TestCase):
         panel=self.app.stock_panel
         panel.set_result(result);panel.cycles.set('6');panel.render()
         first=panel.tree.item(panel.tree.get_children()[0],'values')
-        self.assertEqual(first,('鐵礦石','360','300','60'))
+        self.assertEqual(first,('☐','鐵礦石','360','300','60'))
         self.assertEqual(self.app.journal.data,before)
         panel.copy()
         self.assertIn('鐵礦石\t360\t300\t60',self.root.clipboard_get())
@@ -208,7 +220,7 @@ class StockUITests(unittest.TestCase):
             see.reset_mock()
             panel.set_result(copy.deepcopy(result));panel.cycles.set('6');panel.render()
             see.assert_not_called();delete.assert_not_called()
-        self.assertEqual(panel.tree.item('小麥','values')[2],'60')
+        self.assertEqual(panel.tree.set('小麥','stock'),'60')
         self.assertEqual(self.app.journal.data,before)
 
     def test_quest_progress_scrolls_to_current_quest(self):
@@ -225,8 +237,9 @@ class StockUITests(unittest.TestCase):
         panel.set_result(result)
         self.assertEqual(panel.tree.item('鐵礦石','tags'),('enough',))
         self.assertEqual(panel.tree.item('蜘蛛網','tags'),('unknown',))
-        self.assertEqual(panel.tree.item('蜘蛛網','values')[-1],'待確認')
-        self.assertIn('蜘蛛網\t30\t0\t待確認',panel.text())
+        self.assertEqual(panel.tree.item('蜘蛛網','values')[-1],'30')
+        self.assertIn('蜘蛛網\t30\t0\t30',panel.text())
+        self.assertIn('缺額估算，請核對',panel.text())
         panel.cycles.set('2');panel.render()
         self.assertEqual(panel.tree.item('鐵礦石','tags'),('unknown',))
         result.complete=True;panel.render()
@@ -326,7 +339,8 @@ class StockImprovementTests(unittest.TestCase):
         result=StockResult()
         result.add([StockCell(0,346,'鐵礦石',180)],0)
         self.assertEqual(result.rows(ENTRIES,1)[0][3],0)
-        self.assertIsNone(result.rows(ENTRIES,6)[0][3])
+        self.assertEqual(result.rows(ENTRIES,6)[0][3],180)
+        self.assertIn('鐵礦石',result.uncertain_materials(ENTRIES,6))
 
 
 class StockScrollBatchTests(unittest.TestCase):
