@@ -1,4 +1,4 @@
-﻿param([string]$Python = 'python', [string]$Version = '')
+﻿param([string]$Python = 'python', [string]$Version = '', [switch]$Checksum)
 $ErrorActionPreference = 'Stop'
 if ($Version -and $Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Version must be numeric major.minor.patch' }
 $sourceVersion = & $Python -c 'from app.version import APP_VERSION; print(APP_VERSION)'
@@ -35,8 +35,10 @@ if ($LASTEXITCODE -ne 0) { throw 'PyInstaller build failed' }
 Copy-Item README.md,CHANGELOG.md "$destination/MabinogiAssistant/"
 $zip = "dist/MabinogiAssistant-$Version-single-exe-$stamp.zip"
 Compress-Archive -Path "$destination/MabinogiAssistant" -DestinationPath $zip
-$checksum = "$zip.sha256"
-$hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  $(Split-Path -Leaf $zip)" | Set-Content -LiteralPath $checksum -Encoding ASCII
 Write-Output $zip
-Write-Output $checksum
+if ($Checksum) {
+    $checksumFile = "$zip.sha256"
+    $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$hash  $(Split-Path -Leaf $zip)" | Set-Content -LiteralPath $checksumFile -Encoding ASCII
+    Write-Output $checksumFile
+}

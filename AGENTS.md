@@ -344,3 +344,17 @@ Activating another can displace the previous quest from the tracker.
 5. Validate acceptance criteria and package the portable ZIP.
 
 Keep background-input feasibility separate from the foreground workflow.
+
+
+## Release distribution preference (2026-09-18)
+
+- For future releases, skip SHA-256 calculation and verification, checksum-file generation, and checksum uploads unless the user explicitly requests them.
+- Distribute the EXE and/or ZIP without `.sha256` sidecar files.
+- Keep appropriate application tests, packaged-executable checks, and ZIP contents/integrity checks; this preference only removes the checksum steps.
+
+## Source-first testing preference (2026-09-23)
+
+- For future changes, deliver the source code for the user to test first. Do not automatically build or package an EXE or executable ZIP after implementation, review, or source tests.
+- Package an EXE or executable ZIP only when the user explicitly requests a release. A release request includes packaging authorization; do not require separate packaging approval. A planned version number or ordinary implementation approval alone is not a release request.
+- This preference overrides the automatic packaging steps in Goal, Delivery order, and other release guidance above. Keep code review and appropriate source tests.
+- The current v1.0.3 release is authorized and may use its already-built, validated artifacts.
