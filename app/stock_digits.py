@@ -31,12 +31,21 @@ def digit_strip(raw, threshold):
     # ending well above the complete number baseline. Keep small components,
     # including thin leading ones, so none can silently disappear.
     baseline = max((max(y for x,y in c)+1 for c in components), default=0)
-    components = [c for c in components if not (
+    highlights = [c for c in components if (
         min(y for x,y in c) == 0
         and ((max(x for x,y in c)-min(x for x,y in c)+1 > 20
               and len(c) > 150 and max(y for x,y in c)+1 <= baseline-2)
              or (max(y for x,y in c)+1 < 8
                  and max(y for x,y in c)+1 <= baseline-8)))]
+    # A bottle highlight can leave a short detached fleck inside its footprint.
+    # Exclude only flecks too short to be a digit and well above the baseline;
+    # unrelated noise and every complete leading glyph still cause rejection.
+    components = [c for c in components if c not in highlights and not (
+        max(y for x,y in c)-min(y for x,y in c)+1 <= 8
+        and max(y for x,y in c)+1 <= baseline-6
+        and any(min(x for x,y in h)-2 <= min(x for x,y in c)
+                and max(x for x,y in c) <= max(x for x,y in h)+2
+                for h in highlights))]
     # Keep every remaining meaningful component.
     if not 2 <= len(components) <= 6:
         return None
