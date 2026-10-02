@@ -168,13 +168,13 @@ class StockScannerTests(unittest.TestCase):
         self.assertEqual(published[-1].rows(ENTRIES,1)[0][3],40)
         self.assertIn('鐵礦石', published[-1].uncertain_materials(ENTRIES,1))
 
-    def test_unresponsive_wheel_is_not_end(self):
+    def test_motionless_validated_list_is_complete(self):
         scanner=self.scanner()
         scanner.boundary=StockScanner.boundary.__get__(scanner)
         scanner.move=Mock(return_value=('same',0))
         scanner.reader.cells=Mock(return_value=[StockCell(0,346,'鐵礦石',20)])
-        with self.assertRaises(RuntimeError):scanner.run()
-        self.assertFalse(scanner.result.complete)
+        scanner.run()
+        self.assertTrue(scanner.result.complete)
         self.assertEqual(scanner.result.totals()['鐵礦石'],20)
 
     def test_f8_or_focus_failure_prevents_capture(self):
