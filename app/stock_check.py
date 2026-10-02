@@ -430,10 +430,6 @@ class StockVision:
         return candidates[0] if len(candidates)>=2 and len(set(candidates))==1 else None
 
 
-class StockBoundaryUncertain(RuntimeError):
-    """Both wheel directions were motionless on an otherwise validated screen."""
-
-
 class StockScanner:
     """Separate from Runner and Journal; checked filter controls, never transfers."""
     def __init__(self, window, safety, session, entries, progress=lambda message: None,
@@ -553,10 +549,12 @@ class StockScanner:
         return after, 0
 
     def boundary(self, image, direction):
-        # Verify wheel movement away from the edge and return to the same pixels.
+        # A validated list that cannot move either way fits on one page.
+        # Larger lists still verify movement away from the edge and back.
         away, delta = self.move(image, -direction, notches=1)
         if not delta:
-            raise StockBoundaryUncertain('清單可能只有一頁或捲動未生效；已保留目前可見素材，尚未確認完整庫存。')
+            self.progress('盤點：清單上下皆無位移，按單頁清單完成盤點。')
+            return self.screen()
         returned, reverse = self.move(away, direction, notches=1)
         if abs(reverse+delta) > 2 or displacement(image, returned, direction) != 0:
             raise RuntimeError('清單邊界返回核對失敗；盤點未完成。')
@@ -620,13 +618,7 @@ class StockScanner:
                 frames,at_end=self.scroll_batch(image,1)
                 if frames:image=frames[-1][0]
                 if at_end:
-                    try:
-                        image = self.boundary(image, 1)
-                    except StockBoundaryUncertain:
-                        # Useful partial observations, never a claim of full stock.
-                        # Capture afresh and validate controls before item OCR.
-                        self.scan_page(self.screen(), 0, 1)
-                        raise
+                    image = self.boundary(image, 1)
                     break
             else:
                 raise RuntimeError('回頂超過安全上限；尚未確認清單頂端。')

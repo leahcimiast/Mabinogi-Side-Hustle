@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw
 
 from app.stock_controls import (RARITIES, PLACEHOLDER_ROWS, all_category, filter_open,
                                 only_general, rarity_selected, storage_kind, search_empty)
-from app.stock_check import StockScanner, StockCell, StockBoundaryUncertain
+from app.stock_check import StockScanner, StockCell
 
 
 def storage(kind='shared', all_items=True):
@@ -146,18 +146,17 @@ class StockControlTests(unittest.TestCase):
                 scanner.prepare()
             self.assertNotIn(0x20,[call.args[1] for call in scanner.safety.key.call_args_list])
 
-    def test_motionless_boundary_keeps_visible_counts_but_not_complete(self):
+    def test_single_page_stock_completes_with_visible_counts(self):
         scanner = self.scanner()
         scanner.prepare = Mock(return_value=storage())
         scanner.screen = Mock(return_value=storage())
         scanner.scroll_batch = Mock(return_value=([],True))
         scanner.move = Mock(return_value=(storage(),0))
         scanner.reader.cells = Mock(return_value=[StockCell(0,346,'貝類',182)])
-        with self.assertRaises(StockBoundaryUncertain):
-            scanner.run()
-        self.assertFalse(scanner.result.complete)
+        scanner.run()
+        self.assertTrue(scanner.result.complete)
         self.assertEqual(scanner.result.totals()['貝類'],182)
-        self.assertIn('可能只有一頁或捲動未生效',scanner.result.note)
+        self.assertIn('已由頂端掃描到底',scanner.result.note)
         scanner.reader.cells.assert_called_once()
 
     def test_focus_failure_does_not_enter_partial_page_ocr(self):
