@@ -147,5 +147,76 @@ class StockRecognitionV103Tests(unittest.TestCase):
         self.assertIsNone(self.reader.resolve_name({'鐵礦石+'}))
 
 
+class CompleteStockDigitRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.reader=StockVision(Mock(),[Quest('shell','貝類',10)])
+        self.image=Image.new('RGB',(1280,960),(40,45,55))
+        self.image.paste(glyph_image(),(177,400))
+        self.box=(177,400,246,435)
+
+    @staticmethod
+    def reads(value):
+        return [[dict(text=str(value),x=140,y=32,w=80,h=48)] for _ in range(8)]
+
+    def test_complete_glyphs_recover_empty_weak_and_suffix_votes(self):
+        for votes in ({}, {182:1}, {182:6,82:1}):
+            with self.subTest(votes=votes):
+                self.reader.vision.session.recognize_many.return_value=self.reads(182)
+                self.assertEqual(self.reader.retry_digit_count(
+                    self.image,self.box,lambda:None,votes),182)
+
+    def test_both_masks_and_positions_must_agree(self):
+        for results in ([self.reads(182),self.reads(192)],
+                        [self.reads(182)[:4]+[[]]*4],
+                        [self.reads(182)[:7]+self.reads(82)[:1]],
+                        [self.reads(182)[:2]+[[]]*6]):
+            self.reader.vision.session.recognize_many.side_effect=results
+            self.assertIsNone(self.reader.retry_digit_count(
+                self.image,self.box,lambda:None,{}))
+
+    def test_wrong_length_or_original_candidate_stays_unknown(self):
+        for value,votes in ((82,{}),(192,{182:1}),(182,{192:2,182:1})):
+            self.reader.vision.session.recognize_many.return_value=self.reads(value)
+            self.assertIsNone(self.reader.retry_digit_count(
+                self.image,self.box,lambda:None,votes))
+
+    def test_blank_or_clipped_shapes_never_call_ocr(self):
+        self.assertIsNone(self.reader.retry_digit_count(
+            Image.new('RGB',(1280,960)),self.box,lambda:None,{}))
+        clipped=Image.new('RGB',(1280,960),(40,45,55))
+        clipped.paste(glyph_image().crop((18,0,69,35)),(177,400))
+        self.assertIsNone(self.reader.retry_digit_count(
+            clipped,self.box,lambda:None,{}))
+        self.reader.vision.session.recognize_many.assert_not_called()
+
+    def test_cancel_after_ocr_prevents_confirmation(self):
+        self.reader.vision.session.recognize_many.return_value=self.reads(182)
+        check=Mock(side_effect=[None,RuntimeError('F8')])
+        with self.assertRaisesRegex(RuntimeError,'F8'):
+            self.reader.retry_digit_count(self.image,self.box,check,{})
+        self.assertEqual(self.reader.vision.session.recognize_many.call_count,1)
+
+    def test_bottle_highlight_flecks_do_not_remove_leading_glyph(self):
+        image=glyph_image()
+        draw=ImageDraw.Draw(image)
+        draw.rectangle((0,0,23,7),fill='white')
+        draw.rectangle((8,15,13,17),fill='white')
+        self.assertEqual(digit_strip(image,160)[1],3)
+        # The same fleck without a verified top highlight remains ambiguous.
+        image.paste((40,45,55),(0,0,24,8))
+        self.assertIsNone(digit_strip(image,160))
+
+    def test_top_row_one_pixel_phase_difference_retains_count(self):
+        vision=self.reader.vision
+        vision.storage_names.return_value=[Label('貝類',(152,274,246,334))]
+        vision.storage_names_retry.return_value=[]
+        vision._storage_boxes=[(152,339,246,369)]
+        vision.session.recognize_many.return_value=[
+            [dict(text='105',x=140 if i<6 and i%2 else 20,y=20,w=40,h=30)]
+            for i in range(8)]
+        cell=self.reader.cells(self.image)[0]
+        self.assertEqual((cell.name,cell.count,cell.uncertain),('貝類',105,False))
+
+
 if __name__=='__main__':
     unittest.main()

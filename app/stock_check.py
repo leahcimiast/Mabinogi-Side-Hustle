@@ -222,7 +222,7 @@ class StockVision:
         cells, targets = [], []
         for box in boxes:
             x, y, right, bottom = box
-            if y-65 < 275 or bottom > 955: continue
+            if y-65 < 270 or bottom > 955: continue
             readings = {label.text for label in found
                         if abs(label.box[0]-x) < 5 and abs(label.box[1]-(y-65)) < 5}
             exact = readings & self.names
@@ -303,10 +303,62 @@ class StockVision:
                     if count is not None:
                         self.log(f'數量局部補讀：{cell.name} × {count}')
                 if count is None:
+                    count = self.retry_digit_count(image, group[index][1], check, votes)
+                    if count is not None:
+                        self.log(f'數量完整字形補讀：{cell.name} × {count}')
+                if count is None:
                     self.log(f'數量待核：{cell.name}，各方法讀值 {values}')
                 cells[slot] = StockCell(cell.column, cell.y, cell.name, count, count is None)
         return cells
 
+
+    def retry_digit_count(self, image, box, check, votes):
+        """Corroborate complete glyphs at two positions and two thresholds."""
+        from .stock_digits import digit_strip
+        values = list(votes)
+        if len(values) > 1 and not all(
+                str(max(values, key=lambda n: len(str(n)))).endswith(str(n))
+                for n in values):
+            return None
+        left, top, right, bottom = box
+        confirmed = []
+        for offset in (0, -4):
+            check()
+            if top+offset < 275 or bottom+offset > min(955, image.height):
+                return None
+            raw = image.crop((left, top+offset, right, bottom+offset))
+            strips = [digit_strip(raw, threshold) for threshold in (160, 180)]
+            if any(strip is None for strip in strips):
+                return None
+            first, second = strips
+            if (first[1] != second[1]
+                    or any(abs(a-b)>2 for a,b in zip(first[2],second[2]))
+                    or (values and first[1] != max(len(str(n)) for n in values))):
+                return None
+            crops = []
+            for strip, _, _ in strips:
+                for label, scale in (('N',4), ('N',6), ('Qty',2), ('Qty',4)):
+                    digits = strip.resize((strip.width*scale, strip.height*scale),
+                                          Image.Resampling.NEAREST)
+                    canvas = Image.new('RGB', (max(400,144+digits.width),
+                                              max(200,32+digits.height)), 'white')
+                    ImageDraw.Draw(canvas).text((20,16+4*scale), label,
+                        font=ImageFont.load_default(size=14*scale), fill='black')
+                    canvas.paste(digits, (120,16))
+                    crops.append(canvas)
+            results = self.vision.session.recognize_many(crops)
+            check()
+            readings = [parse_count([w for w in words if w['x'] >= 120
+                                    and w['y'] >= 16]) for words in results]
+            observed = [n for n in readings if n is not None]
+            if (len(observed) < 3 or len(set(observed)) != 1
+                    or not any(n is not None for n in readings[:4])
+                    or not any(n is not None for n in readings[4:])
+                    or len(str(observed[0])) != first[1]
+                    or (values and observed[0] not in values)):
+                return None
+            confirmed.append(observed[0])
+        return confirmed[0] if len(set(confirmed)) == 1 else None
 
     def retry_conflicting_count(self, image, box, check, votes):
         """Resolve suffix conflicts only with full digit-shape and OCR agreement."""
@@ -430,10 +482,6 @@ class StockVision:
         return candidates[0] if len(candidates)>=2 and len(set(candidates))==1 else None
 
 
-class StockBoundaryUncertain(RuntimeError):
-    """Both wheel directions were motionless on an otherwise validated screen."""
-
-
 class StockScanner:
     """Separate from Runner and Journal; checked filter controls, never transfers."""
     def __init__(self, window, safety, session, entries, progress=lambda message: None,
@@ -553,10 +601,12 @@ class StockScanner:
         return after, 0
 
     def boundary(self, image, direction):
-        # Verify wheel movement away from the edge and return to the same pixels.
+        # A validated list that cannot move either way fits on one page.
+        # Larger lists still verify movement away from the edge and back.
         away, delta = self.move(image, -direction, notches=1)
         if not delta:
-            raise StockBoundaryUncertain('清單可能只有一頁或捲動未生效；已保留目前可見素材，尚未確認完整庫存。')
+            self.progress('盤點：清單上下皆無位移，按單頁清單完成盤點。')
+            return self.screen()
         returned, reverse = self.move(away, direction, notches=1)
         if abs(reverse+delta) > 2 or displacement(image, returned, direction) != 0:
             raise RuntimeError('清單邊界返回核對失敗；盤點未完成。')
@@ -620,13 +670,7 @@ class StockScanner:
                 frames,at_end=self.scroll_batch(image,1)
                 if frames:image=frames[-1][0]
                 if at_end:
-                    try:
-                        image = self.boundary(image, 1)
-                    except StockBoundaryUncertain:
-                        # Useful partial observations, never a claim of full stock.
-                        # Capture afresh and validate controls before item OCR.
-                        self.scan_page(self.screen(), 0, 1)
-                        raise
+                    image = self.boundary(image, 1)
                     break
             else:
                 raise RuntimeError('回頂超過安全上限；尚未確認清單頂端。')
