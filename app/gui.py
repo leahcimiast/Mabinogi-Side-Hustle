@@ -137,7 +137,7 @@ class App:
         self.manual_frame=ttk.LabelFrame(outer,text='待手動補領（名稱、數量、原因）',padding=6)
         self.manual_list=tk.Listbox(self.manual_frame,height=3,exportselection=False)
         self.manual_list.pack(fill='x')
-        self.footer=tk.StringVar(value=f'{self.hotkey_name}：'+('就緒' if self.safety.hotkey_ok else '不可用，請關閉舊版助手後重開')+'｜紀錄只存本機')
+        self.footer=tk.StringVar(value=f'{self.hotkey_name}：'+('就緒' if self.safety.hotkey_ok else '未註冊，仍可開始；可使用暫停按鈕')+'｜紀錄只存本機')
         self.log(self.footer.get())
         self.log(f'紀錄檔：{self.report}')
         self.footer.trace_add('write',lambda *_:self.log(self.footer.get()))
@@ -223,7 +223,7 @@ class App:
         else:
             self.action_progress.set('');self.action_progress_label.pack_forget()
         self.withdraw_progress['value']=count
-        pending=data['pending'];ready=not self.busy and self.journal is not None and not pending and self.name_review is None and self.safety.hotkey_ok
+        pending=data['pending'];ready=not self.busy and self.journal is not None and not pending and self.name_review is None
         self.withdraw_button['state']='normal' if ready and count+len(data.get('skipped',{}))<19 else 'disabled'
         self.quest_button['state']='normal' if ready else 'disabled'
         self.pause_button['state']='normal' if self.busy else 'disabled'
@@ -333,13 +333,12 @@ class App:
     def start(self,stage):
         if self.busy or self.journal is None:return
         if not self.commit_quest_edit():return
-        if not self.safety.hotkey_ok:self.fail('暫停熱鍵不可用；請關閉舊版助手或占用 F8 的程式後重開。');return
         try:self.journal.ready()
         except Exception as error:self.fail(str(error));return
         self.tabs.select(self.quest_panel if stage=='quests' else self.withdraw_panel)
         self.busy=True;self.start_timing('素材領取' if stage=='withdraw' else '任務交付')
         self.stop_reason.set('');self.current_item='';self.item_text.set('目前項目：—');self.step.set('步驟：等待切回遊戲')
-        self.status.set('倒數期間將自動切回遊戲；暫停熱鍵可立即暫停。');self.safety.prepare();self.refresh()
+        self.status.set('倒數期間將自動切回遊戲；可使用暫停按鈕。');self.safety.prepare();self.refresh()
         def run():
             try:
                 for remaining in (3,2,1):

@@ -58,7 +58,7 @@ class StockPanel:
         self.render()
 
     def refresh(self):
-        enabled = not self.app.busy and self.app.safety.hotkey_ok
+        enabled = not self.app.busy
         self.button['state'] = 'normal' if enabled else 'disabled'
         self.selector['state'] = 'readonly' if not self.app.busy else 'disabled'
 
@@ -138,9 +138,6 @@ class StockPanel:
     def start(self):
         app = self.app
         if app.busy: return
-        if not app.safety.hotkey_ok:
-            app.fail('暫停熱鍵不可用；無法開始盤點。')
-            return
         try: requirements(app.quests, int(self.cycles.get()))
         except ValueError as error:
             app.fail(str(error))
@@ -158,7 +155,7 @@ class StockPanel:
         app.current_item = ''
         app.stop_reason.set('')
         app.safety.prepare()
-        app.status.set('盤點：倒數期間自動切回遊戲；暫停熱鍵可立即暫停。')
+        app.status.set('盤點：倒數期間自動切回遊戲；可使用暫停按鈕。')
         app.refresh()
 
         def progress(message):

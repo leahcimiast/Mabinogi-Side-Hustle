@@ -40,8 +40,10 @@ class WithdrawalTests(unittest.TestCase):
         self.j.data['withdrawn']=[m.name for m in self.j.batch.materials[1:]]
         self.safety=Mock();self.runner=Runner(Mock(),self.safety,Mock(),self.j,ENTRIES,Path('scripts/ocr.ps1'))
         self.runner.wait_transfer_confirmation=Mock();self.runner.wait_transfer_prompt=Mock();self.runner.storage_top=Mock();self.runner.rest=Mock();self.runner.click=Mock();self.runner.key=Mock()
+        self.runner.prepare_retrieval_storage=Mock()  # Preparation has separate screen/input tests.
         self.screen=Mock();self.screen.storage.return_value=True;self.screen.quantity_dialog.return_value=True
         self.runner.screen=Mock(return_value=self.screen)
+        self.runner.retrieval_storage_screen=self.runner.screen  # Pixel readiness has separate transition tests.
         self.runner.wait=Mock(return_value=self.screen)
         self.runner.vision.storage_names=Mock(return_value=[Label('鐵礦石',(250,350,340,390))])
         self.runner.vision.entered_quantity=Mock(side_effect=AssertionError("withdrawal must not read back quantity"))

@@ -160,7 +160,7 @@ class DesktopTheme:
                         w.configure(insertbackground=c['text'], padx=8, pady=4, height=15)
                 visit(w)
         visit(self.root)
-        app.withdraw_button.configure(style='Primary.TButton')
+        app.withdraw_button.configure(style='TButton')
         app.debug.tag_configure('success', foreground=c['success'], background=c['surface'])
         app.debug.tag_configure('failure', foreground=c['danger'], background=c['surface'])
         outer = app.notice.master

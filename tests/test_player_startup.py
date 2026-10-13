@@ -19,6 +19,10 @@ class StartupTests(unittest.TestCase):
         self.capture.u.IsIconic.return_value=False
         self.capture.u.GetForegroundWindow.return_value=123
     def tearDown(self):self.capture_patch.stop()
+    def test_focus_allowed_without_registered_hotkey(self):
+        self.safety.hotkey_ok=False
+        self.assertIs(focus_game(self.safety),self.window)
+        self.capture.u.SetForegroundWindow.assert_called_once_with(123)
     def test_focuses_once_without_game_input_or_arming(self):
         self.assertIs(focus_game(self.safety),self.window)
         self.capture.u.SetForegroundWindow.assert_called_once_with(123)

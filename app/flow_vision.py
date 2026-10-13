@@ -332,7 +332,7 @@ class Vision:
             sets.append(mapped)
         return MultiScreen(image,sets)
 
-    def storage_names(self,image,mode="inverted"):
+    def _storage_name_boxes(self,image):
         # Locate the repeating gray name rows after scrolling, rather than assuming
         # the original top-of-list row offset. White icon counts are excluded.
         if getattr(self,'_geometry_image',None) is image:
@@ -347,22 +347,33 @@ class Vision:
                 return []
             tops=[y for y in range(280+phase-5,955,123) if y>=330 and y+30<=955]
             self._geometry_image=image;self._geometry_tops=tops
-        atlas=Image.new('RGB',(2400,max(180,len(tops)*180)),'white');boxes=[]
-        for row,y in enumerate(tops):
-            for col in range(6):
-                x=57+95*col;box=(x,y,x+94,y+30)
-                raw=image.crop(box)
-                if mode=='color':crop=raw
-                elif mode=='gray':crop=ImageOps.autocontrast(raw.convert('L'))
-                elif mode=='threshold':crop=ImageOps.invert(raw.convert('L').point(lambda p:255 if p>110 else 0))
-                elif mode=='wide':crop=ImageOps.autocontrast(ImageOps.invert(image.crop((x,y-7,x+94,y+37)).convert('L')))
-                else:crop=ImageOps.autocontrast(ImageOps.invert(raw.convert('L')))
-                crop=crop.resize((376,120))
-                atlas.paste(crop,(col*400+10,row*180+10));boxes.append(box)
-        scale=.5 if mode in ('color','wide') else 1
-        source=atlas.resize((int(atlas.width*scale),int(atlas.height*scale))) if scale!=1 else atlas
+        boxes=[(57+95*col,y,57+95*col+94,y+30) for y in tops for col in range(6)]
         self._storage_boxes=boxes
-        words=self.session.recognize_many([source])[0]
+        return boxes
+
+    def _storage_name_images(self,image,boxes,modes):
+        # Share raw crops and grayscale conversion within this one snapshot only.
+        atlases=[Image.new('RGB',(2400,max(180,len(boxes)//6*180)),'white')
+                 for _ in modes]
+        for index,box in enumerate(boxes):
+            row,col=divmod(index,6)
+            x,y,_,_=box
+            raw=image.crop(box)
+            gray=raw.convert('L')
+            for atlas,mode in zip(atlases,modes):
+                if mode=='color':crop=raw
+                elif mode=='gray':crop=ImageOps.autocontrast(gray)
+                elif mode=='threshold':crop=ImageOps.invert(gray.point(lambda p:255 if p>110 else 0))
+                elif mode=='wide':crop=ImageOps.autocontrast(ImageOps.invert(image.crop((x,y-7,x+94,y+37)).convert('L')))
+                else:crop=ImageOps.autocontrast(ImageOps.invert(gray))
+                atlas.paste(crop.resize((376,120)),(col*400+10,row*180+10))
+        scales=[.5 if mode in ('color','wide') else 1 for mode in modes]
+        sources=[atlas.resize((int(atlas.width*scale),int(atlas.height*scale)))
+                 if scale!=1 else atlas for atlas,scale in zip(atlases,scales)]
+        return sources,scales
+
+    @staticmethod
+    def _storage_name_labels(words,boxes,scale):
         if scale!=1:words=[dict(text=w['text'],x=w['x']/scale,y=w['y']/scale,w=w['w']/scale,h=w['h']/scale) for w in words]
         found=[]
         for i,box in enumerate(boxes):
@@ -372,10 +383,34 @@ class Vision:
             if re.fullmatch(r'[\u3400-\u9fff+]+',text):
                 found.append(Label(text,(box[0],box[1]-65,box[2],box[3]-35)))
         return found
+
+    def storage_names(self,image,mode="inverted",*,batch=False):
+        # Retrieval requests all five methods together. The retry method consumes
+        # the four alternate readings once, on this exact snapshot, without OCR replay.
+        self._storage_name_pending=None
+        boxes=self._storage_name_boxes(image)
+        if not boxes:
+            if batch:self._storage_name_pending=(image,[[],[],[],[]])
+            return []
+        modes=('inverted','color','gray','threshold','wide') if batch else (mode,)
+        sources,scales=self._storage_name_images(image,boxes,modes)
+        results=self.session.recognize_many(sources)
+        if len(results)!=len(modes):raise RuntimeError('Storage OCR response does not match batch size')
+        readings=[self._storage_name_labels(words,boxes,scale)
+                  for words,scale in zip(results,scales)]
+        if batch:self._storage_name_pending=(image,readings[1:])
+        return readings[0]
+
     def storage_names_retry(self,image):
+        pending=getattr(self,'_storage_name_pending',None)
+        self._storage_name_pending=None
         found=[]
-        for mode in ('color','gray','threshold','wide'):
-            for label in self.storage_names(image,mode):
+        if pending is not None and pending[0] is image:
+            alternate=pending[1]
+        else:
+            alternate=[self.storage_names(image,mode) for mode in ('color','gray','threshold','wide')]
+        for readings in alternate:
+            for label in readings:
                 if not any(x.text==label.text and abs(x.point[0]-label.point[0])<30 and abs(x.point[1]-label.point[1])<30 for x in found):found.append(label)
         # Short labels can be completely omitted inside a large atlas even at
         # another scale. Retry only unread cells as isolated 2x crops.
@@ -412,8 +447,8 @@ class Vision:
         # Read back only the number typed by this app, never the available stock.
         box=(925,765,998,810)
         crop=image.crop(box).convert('RGB')
-        mask=Image.new('L',crop.size)
-        mask.putdata([255 if min(p)>threshold else 0 for p in crop.get_flattened_data()])
+        from .stock_digits import white_mask
+        mask=white_mask(crop,threshold,spread=None)
         bounds=mask.getbbox()
         if bounds is None:return None
         digit=ImageOps.invert(mask.crop(bounds))

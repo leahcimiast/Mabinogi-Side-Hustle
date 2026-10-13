@@ -31,7 +31,7 @@ class SearchContinuationTests(unittest.TestCase):
     setUp=fixtures.WithdrawalTests.setUp
     tearDown=fixtures.WithdrawalTests.tearDown
     def test_empty_or_repeated_names_do_not_stop_moving_search(self):
-        self.runner.vision.storage_names.side_effect=[[],[],[Label('鐵礦石',(250,350,340,390))]]
+        self.runner.vision.storage_names.side_effect=[[],[],[],[],[Label('鐵礦石',(250,350,340,390))]]
         self.runner.scroll_storage=Mock(return_value=(self.screen.image,True))
         self.runner.withdrawal()
         self.assertEqual(self.runner.scroll_storage.call_count,1)

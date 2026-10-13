@@ -9,6 +9,7 @@ from .flow_vision import Vision
 from .inventory_recognition import compact, line_text
 from .name_candidates import distance
 from .ocr_aliases import canonical_material
+from .stock_digits import single_digit_strips, white_mask
 
 
 def requirements(entries, cycles):
@@ -261,7 +262,25 @@ class StockVision:
         for start in range(0, len(targets), 2):
             group = targets[start:start+2]
             crops = []
+            single_digits = {}
             for _, box in group:
+                strips = single_digit_strips(image, box)
+                if strips is not None:
+                    bounds = []
+                    single_digits[len(crops)//8] = bounds
+                    # Replace, rather than append to, the eight existing inputs.
+                    # Each of two positions / masks gets two OCR scales.
+                    for strip in strips:
+                        for scale, font_size in ((3,34), (4,56)):
+                            digits = strip.resize((strip.width*scale, strip.height*scale),
+                                                  Image.Resampling.NEAREST)
+                            canvas = Image.new('RGB', (420, 200), 'white')
+                            ImageDraw.Draw(canvas).text((8,32), 'Qty',
+                                font=ImageFont.load_default(size=font_size), fill='black')
+                            canvas.paste(digits, (120,16))
+                            crops.append(canvas)
+                            bounds.append((120+digits.width,16+digits.height))
+                    continue
                 gray = image.crop(box).convert('L')
                 for threshold in (150, 185, 215):
                     digit = ImageOps.invert(gray.point(lambda p: 255 if p > threshold else 0))
@@ -280,6 +299,13 @@ class StockVision:
             for index, (slot, _) in enumerate(group):
                 values = []
                 for method, words in enumerate(results[index*8:index*8+8]):
+                    if index in single_digits:
+                        # Crop bounds exclude the layout cue, just as for normal counts.
+                        right, bottom = single_digits[index][method]
+                        values.append(parse_count([w for w in words if w['x'] >= 120
+                            and w['y'] >= 16 and w['x']+w['w'] <= right
+                            and w['y']+w['h'] <= bottom and w['h'] >= 12]))
+                        continue
                     left = 120 if method < 6 and method % 2 else 16
                     width,height = (207,105) if method>=6 else (276,140)
                     values.append(parse_count([w for w in words if w['x'] >= left and w['y'] >= 16
@@ -288,7 +314,18 @@ class StockVision:
                 ranked = votes.most_common()
                 count = (ranked[0][0] if ranked and ranked[0][1]>=2
                          and (len(ranked)==1 or ranked[0][1]>ranked[1][1]) else None)
+                if index in single_digits:
+                    observed = [value for value in values if value is not None]
+                    count = (observed[0] if observed and len(set(observed)) == 1
+                             and 1 <= observed[0] <= 9
+                             and all(any(value is not None for value in values[i:i+2])
+                                     for i in range(0,8,2)) else None)
                 cell = cells[slot]
+                if index in single_digits:
+                    if count is None:
+                        self.log(f'數量待核：{cell.name}，單位數字形讀值 {values}')
+                    cells[slot] = StockCell(cell.column, cell.y, cell.name, count, count is None)
+                    continue  # Do not override conflicting full-glyph evidence with a weak vote.
                 # Correlated missing-leading-digit errors must not win a vote.
                 if any(a != b and str(a).endswith(str(b)) for a in votes for b in votes):
                     count = self.retry_conflicting_count(image, group[index][1], check, votes)
@@ -407,9 +444,7 @@ class StockVision:
             raw = image.crop((left, top+offset, right, bottom+offset)).convert('RGB')
             crops = []
             for spread in (20, 40):
-                mask = Image.new('L', raw.size)
-                mask.putdata([0 if min(pixel)>150 and max(pixel)-min(pixel)<spread else 255
-                              for pixel in raw.get_flattened_data()])
+                mask = ImageOps.invert(white_mask(raw,150,spread))
                 digits = mask.resize((raw.width*4, raw.height*4))
                 canvas = Image.new('RGB', (420, 172), 'white')
                 ImageDraw.Draw(canvas).text((8, 53), 'Qty', font=ImageFont.load_default(size=34), fill='black')

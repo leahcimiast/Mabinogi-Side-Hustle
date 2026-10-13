@@ -13,6 +13,16 @@ class BatchInputTests(unittest.TestCase):
             for action in [lambda:self.s.click(self.w,10,10),lambda:self.s.key(self.w,32),lambda:self.s.number(self.w,60),lambda:self.s.scroll(self.w,350,500,-3)]:
                 with self.assertRaises(RuntimeError):action()
             send.assert_not_called()
+    def test_arm_without_hotkey_still_checks_cancellation_and_focus(self):
+        self.s.hotkey_ok=False
+        with patch('app.input_control.u.GetForegroundWindow',return_value=42):
+            self.s.arm(self.w)
+            self.assertFalse(self.s.paused)
+            self.s.cancelled.set()
+            with self.assertRaisesRegex(RuntimeError,'取消'):self.s.arm(self.w)
+        self.s.cancelled.clear()
+        with patch('app.input_control.u.GetForegroundWindow',return_value=99):
+            with self.assertRaisesRegex(RuntimeError,'前景'):self.s.arm(self.w)
     def test_lost_focus_prevents_mouse_and_keyboard(self):
         self.s.paused=False
         with patch('app.input_control.client_rect',return_value=(0,0,1280,960)),patch('app.input_control.u.GetForegroundWindow',return_value=99),patch('app.input_control.u.SendInput') as send:
