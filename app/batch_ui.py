@@ -18,8 +18,6 @@ def focus_game(safety):
     from ctypes import wintypes as W
     if safety.cancelled.is_set():
         raise RuntimeError(safety.reason)
-    if not safety.hotkey_ok:
-        raise RuntimeError('暫停熱鍵不可用；無法開始。')
     windows=capture.detect()
     if len(windows)!=1:
         raise RuntimeError(f'找到 {len(windows)} 個遊戲視窗；請只保留一個瑪奇 Mobile 視窗。')

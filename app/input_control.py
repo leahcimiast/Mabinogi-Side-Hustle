@@ -103,8 +103,8 @@ class Safety:
 
     def arm(self,window):
         with self.lock:
-            if not self.hotkey_ok or self.cancelled.is_set():
-                raise RuntimeError('熱鍵不可用或測試已取消')
+            if self.cancelled.is_set():
+                raise RuntimeError('工作已取消')
             if u.GetForegroundWindow() != window.hwnd:
                 raise RuntimeError('遊戲不在前景')
             self.hwnd,self.paused,self.reason = window.hwnd,False,'單次 I 測試'

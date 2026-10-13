@@ -1,11 +1,13 @@
 """Bounded foreground workflow. Stock assumptions never become observed quantities."""
 import time
+from PIL import Image,ImageChops,ImageStat
 from . import capture
 from .ocr_aliases import canonical_material
 from .inventory_recognition import compact,scroll_label_candidates
 from .flow_vision import Vision,Screen,labels,tracker_identity
 from .name_candidates import distance,material_candidate_allowed
 from .storage_scroll import scroll_page
+from . import retrieval_vision
 from .name_memory import NameReviewRequired,NameReviewCompleted
 
 class SkipMaterial(RuntimeError):
@@ -21,6 +23,8 @@ class Runner:
         self.journal=journal;self.batch=journal.batch;self.entries=entries;self.script=script;self.log=log
         self.name_memory=name_memory;self.on_name_review=on_name_review;self.storage_mode=False;self.submission_mode=False;self.quest_mode=False;self.tracker_world=True;self.inventory_ready=False
         self.on_progress=on_progress;self.current_item="";self.current_quantity=None
+        self._retrieval_single_page=None
+        self._retrieval_saw_scroll=False
     def progress(self,step,item=None,quantity=None):
         if item is not None:self.current_item=item
         if quantity is not None:self.current_quantity=quantity
@@ -69,9 +73,67 @@ class Runner:
             self.rest(.3)
         raise ScreenTimeout(reason+'；已暫停，沒有自動重試動作。')
     def scroll_storage(self,image,direction):
-        return scroll_page(image,
+        after,moved=scroll_page(image,
             lambda x,y,n:self.safety.scroll(self.window,x,y,n),self.rest,
-            lambda:capture.capture(self.window),direction,self.log)
+            self._retrieval_stable_image,direction,self.log,
+            movement=lambda before,after:retrieval_vision.moved(before,after,direction))
+        if moved:self._retrieval_saw_scroll=True
+        return after,moved
+
+    def _retrieval_stable_image(self,seconds=12):
+        end=self.clock()+seconds;previous=None;agreements=0
+        while self.clock()<end:
+            epoch=self._retrieval_pause_epoch()
+            self.check();image=capture.capture(self.window);self.check()
+            if epoch!=self._retrieval_pause_epoch():
+                previous=None;agreements=0;self.rest(.12);continue
+            if retrieval_vision.ready(image):
+                agreements=agreements+1 if previous is not None and retrieval_vision.stable(previous,image) else 0
+                if agreements>=2:return image
+                previous=image
+            else:previous=None;agreements=0
+            self.rest(.12)
+        raise ScreenTimeout('保管箱清單轉場尚未結束或畫面不明；未繼續領取。')
+
+    def retrieval_storage_screen(self):
+        end=self.clock()+12
+        while self.clock()<end:
+            image=self._retrieval_stable_image(max(.01,end-self.clock()))
+            context=self._retrieval_page_context(image)
+            result=self.vision.observe_storage(image);self.check()
+            # If OCR was paused, its pre-pause snapshot cannot guide the next item.
+            if result.storage() and self._retrieval_context_matches(context,image):return result
+        raise ScreenTimeout('未確認穩定的公用保管箱清單；未繼續領取。')
+
+    def _retrieval_pause_epoch(self):
+        paused=getattr(self.safety,'paused_seconds',0)
+        return paused if isinstance(paused,(int,float)) else 0
+
+    def _retrieval_page_context(self,image):
+        if not isinstance(image,Image.Image) or image.size!=(1280,960):return None
+        # Shared-storage selector, category row and search/filter chip. Exclude
+        # changing stock weights, item quantities, icons and selection highlights.
+        controls=tuple(image.crop(box).convert('RGB') for box in
+                       ((16,16,270,80),(25,88,615,138),(30,138,170,190)))
+        return self._retrieval_pause_epoch(),controls
+
+    def _retrieval_context_matches(self,context,image):
+        current=self._retrieval_page_context(image)
+        if context is None or current is None or context[0]!=current[0]:return False
+        for before,after in zip(context[1],current[1]):
+            delta=ImageChops.difference(before,after)
+            changed=delta.convert('L').point(lambda value:255 if value>20 else 0)
+            if (max(ImageStat.Stat(delta).mean)>3
+                    or ImageStat.Stat(changed).mean[0]/255>.005):return False
+        return True
+
+    def _retrieval_single_page_valid(self,image):
+        if self._retrieval_single_page is None:return False
+        if not self._retrieval_context_matches(self._retrieval_single_page,image):
+            self._retrieval_single_page=None
+            self.log('單頁紀錄已失效；重新確認保管箱捲動狀態。')
+            return False
+        return True
     def storage_top(self,image):
         self.progress('捲動至保管箱清單頂端')
         for _ in range(100):
@@ -124,11 +186,24 @@ class Runner:
             if attempt<3:self.rest(.4)
         raise SkipMaterial(f'{name}：要求 {expected}，三次畫面核對仍不明；未按下領取。請查看除錯紀錄中的視窗與數字結果。')
 
+    def prepare_retrieval_storage(self):
+        # Reuse the verified preparation only, never run a stock scan or change
+        # the journal. The stock tab's implementation and UI stay untouched.
+        from .stock_check import StockScanner
+        self.progress('準備公用保管箱、全部分類與一般稀有度篩選')
+        preparation=StockScanner(self.window,self.safety,self.session,self.entries,
+            progress=lambda message:self.log('領取準備：'+message.removeprefix('盤點：')))
+        preparation.prepare()
+
     def withdrawal(self):
+        # Run-local only: never persist this state or carry it into another start.
+        self._retrieval_single_page=None
+        self._retrieval_saw_scroll=False
         self.storage_mode=True
         self.journal.ready()
+        self.prepare_retrieval_storage()
         self.progress('檢查公用保管箱畫面')
-        s=self.screen()
+        s=self.retrieval_storage_screen()
         if not s.storage():raise RuntimeError('請先開啟公用保管箱的「全部」頁面，關閉物品提示及數量視窗。')
         for item in self.batch.materials:
             if item.name in self.journal.data['withdrawn']:continue
@@ -189,17 +264,29 @@ class Runner:
 
     def withdraw_one(self,item,s):
         self.progress('搜尋素材',item.name,item.quantity)
-        target=None;end_reached=False;rewound=False
+        target=None;end_reached=False;rewound=False;probe_context=None
         for page in range(150):
             # The preceding confirmed transfer already supplied a fresh screen.
-            if page:s=self.screen()
+            if page:s=self.retrieval_storage_screen()
             if not s.storage():raise RuntimeError('保管箱畫面已變更；停止搜尋。')
+            self._retrieval_single_page_valid(s.image)
             self.progress(f'辨識保管箱第 {page+1} 次掃描')
-            names=self.vision.storage_names(s.image)
-            self.log('本頁首次多方法 OCR：反相、彩色、灰階、二值化、加高裁切')
-            for label in self.vision.storage_names_retry(s.image):
-                if not any(x.text==label.text and abs(x.point[0]-label.point[0])<30 and abs(x.point[1]-label.point[1])<30 for x in names):names.append(label)
-            self.check()
+            for reading in range(2):
+                name_context=self._retrieval_page_context(s.image)
+                names=self.vision.storage_names(s.image,batch=True)
+                self.log('本頁首次多方法 OCR：反相、彩色、灰階、二值化、加高裁切')
+                for label in self.vision.storage_names_retry(s.image):
+                    if not any(x.text==label.text and abs(x.point[0]-label.point[0])<30 and abs(x.point[1]-label.point[1])<30 for x in names):names.append(label)
+                self.check()
+                if name_context is not None and not self._retrieval_context_matches(name_context,s.image):
+                    if reading:raise RuntimeError('品名辨識期間狀態再次改變；未領取，請重新開始。')
+                    self.log('丟棄暫停前的品名結果；重新擷取目前清單。')
+                    s=self.retrieval_storage_screen()
+                    continue
+                if names or reading:break
+                self.log('本輪未讀到品名；先重新擷取穩定清單，不直接捲動。')
+                s=self.retrieval_storage_screen()
+            self._retrieval_single_page_valid(s.image)
             self.log('本頁辨識名稱：'+('、'.join(x.text for x in names) or '沒有可辨識名稱'))
             # Multiple OCR variants of one cell are not separate stacks, and a
             # shortened grade/plus reading must not defeat a conflicting reading.
@@ -228,7 +315,11 @@ class Runner:
                 found=[x for x in names if x.text=='花']
             if len(found)==1:target=found[0];break
             if len(found)>1:raise SkipMaterial(f'{item.name} 有多個堆疊；不讀庫存數量時不能安全選擇足量堆疊。')
+            if self._retrieval_single_page_valid(s.image):
+                raise SkipMaterial(f'本次已確認單頁清單，但未辨識到 {item.name}；未領取，請人工核對。')
             if not rewound:
+                self._retrieval_saw_scroll=False
+                probe_context=self._retrieval_page_context(s.image)
                 self.storage_top(s.image);rewound=True
                 continue
             self.progress(f'未找到 {item.name}，繼續向下捲動（第 {page+1} 頁）')
@@ -236,6 +327,12 @@ class Runner:
             if not moved:
                 end_reached=True
                 self.log('連續兩次向下捲動無位移；清單可能已到底，或遊戲未接受滾輪。')
+                if not self._retrieval_saw_scroll and probe_context is not None:
+                    final=self.retrieval_storage_screen()
+                    if not final.storage():raise RuntimeError('保管箱畫面已變更；停止搜尋。')
+                    if self._retrieval_context_matches(probe_context,final.image):
+                        self._retrieval_single_page=probe_context
+                        self.log('本次領取已確認上下捲動皆無位移；後續沿用單頁狀態，不重複捲動。')
                 break
         if target is None:
             if end_reached:
@@ -261,7 +358,7 @@ class Runner:
         self.journal.confirm();self.progress('已領取')
         self.log(f'領取已送出：{item.name} × {item.quantity}；依設定視為已入背包。')
         self.rest()
-        return self.wait(lambda s:s.storage(),'等待保管箱清單，以處理下一項')
+        return self.wait(lambda s:s.storage(),'等待保管箱清單，以處理下一項',reader=self.retrieval_storage_screen)
     def expected_tracker(self,s,q):
         tail=q.quest.replace('：',':').split(':',1)[-1].strip()
         return s.tracker(tail) or s.tracker(q.material)

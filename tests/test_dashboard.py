@@ -16,6 +16,24 @@ class DashboardTests(unittest.TestCase):
         self.app.close();self.safety_patch.stop();self.env.stop();self.temp.cleanup()
     def widgets(self,w):
         for child in w.winfo_children():yield child;yield from self.widgets(child)
+    def test_unregistered_hotkey_does_not_disable_start_buttons(self):
+        self.safety.hotkey_ok=False
+        self.app.refresh()
+        for button in (self.app.withdraw_button,self.app.quest_button,self.app.stock_panel.button):
+            self.assertEqual(str(button['state']),'normal')
+        self.app.busy=True
+        self.app.refresh()
+        self.assertEqual(str(self.app.withdraw_button['state']),'disabled')
+        self.assertEqual(str(self.app.pause_button['state']),'normal')
+    def test_all_actions_can_start_with_unregistered_hotkey(self):
+        self.safety.hotkey_ok=False
+        for action in (lambda:self.app.start('withdraw'),lambda:self.app.start('quests'),
+                       self.app.stock_panel.start):
+            self.app.busy=False
+            with patch('app.gui.threading.Thread') as thread:
+                action()
+                thread.return_value.start.assert_called_once()
+                self.assertTrue(self.app.busy)
     def test_no_legacy_controls_or_extra_window(self):
         widgets=list(self.widgets(self.root))
         self.assertFalse(any(w.winfo_class() in ('Canvas','Toplevel') for w in widgets))
